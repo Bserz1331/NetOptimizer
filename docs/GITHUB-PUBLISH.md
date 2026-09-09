@@ -10,10 +10,11 @@
 4. 將 `dist\NetOptimizer-v3.0.11-win-x64.zip` 與 `dist\SHA256SUMS-v3.0.11.txt` 附加到 GitHub Release；需要時再附上 EXE、PDB 與 source ZIP。
 5. 確認 GitHub Actions 的 Windows build 通過後，再公開 Release。
 
-## 發布前必須決定
+## 目前發布決定
 
-- repository 要公開或私人。
-- 是否採用 MIT、Apache-2.0 或其他授權；目前尚未放入 `LICENSE`，公開原始碼不等於授權他人使用或再發布。
+- repository 已採公開，名稱為 `NetOptimizer`。
+- 公開核心採用根目錄 `LICENSE` 的 MIT License。
+- 未來付費授權、雲端服務與商業整合依 [開源邊界](OPEN-SOURCE-BOUNDARY.md) 分離，不放入公開核心。
 - 是否將 PDB 與 source ZIP 一起提供給使用者。
 
 ## 不應提交的資料

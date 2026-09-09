@@ -10,6 +10,7 @@ v3.0.11 強化網路自動偵測與 A/B 啟動安全：備援只會選擇 `IsRea
 - `build\`：本機編譯、測試與畫面快照；不提交到 GitHub。
 - `dist\`：本機 Release 輸出；不提交到 GitHub，內容附加到 GitHub Release。
 - `docs\`：錯誤診斷與操作補充。
+- `docs\OPEN-SOURCE-BOUNDARY.md`：公開核心與未來商業模組的發布邊界。
 - `archive\`：舊版與原始桌面副本，僅供本機回溯，不提交到 GitHub。
 
 GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.11 變更與驗證請看 [Release notes](docs/RELEASE-v3.0.11.md)。
@@ -56,4 +57,4 @@ A/B 實際改變 IPv4 InterfaceMetric、讀取預設 route、ARP 或 MTU 通常�
 
 ## 授權
 
-目前尚未指定開源授權。若要公開供他人修改或再發布，請先補上 `LICENSE`；GitHub 公開 repository 本身不會自動授權他人使用程式碼。
+本 Repository 的公開核心採用 [MIT License](LICENSE)。未來若加入付費授權、雲端服務或客製整合，會依 [開源邊界](docs/OPEN-SOURCE-BOUNDARY.md) 與公開核心分離；不會把私密金鑰放進 EXE 或公開原始碼。
