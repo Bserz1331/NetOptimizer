@@ -1,0 +1,45 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        shell: pwsh
+        run: .\build.ps1 -Version 3.0.11 -OutputDirectory .\dist
+
+      - name: Run deterministic tests
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path .\dist\NetOptimizer-v3.0.11.exe).Path
+          $tests = @(
+            '--self-test',
+            '--failover-simulation',
+            '--diagnostics-test',
+            '--ui-layout-test',
+            '--gui-startup-test'
+          )
+          foreach ($test in $tests) {
+            & $exe $test
+            if ($LASTEXITCODE -ne 0) {
+              throw "Test failed: $test (exit code $LASTEXITCODE)"
+            }
+          }
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetOptimizer-v3.0.11-windows
+          path: |
+            dist/NetOptimizer-v3.0.11.exe
+            dist/NetOptimizer-v3.0.11.pdb

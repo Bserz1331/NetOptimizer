@@ -1,0 +1,19 @@
+# Local build and verification output
+/build/
+/src/dist/
+
+# Release files are attached to GitHub Releases instead of committed to source
+/dist/
+
+# Historical binaries and original desktop copies stay local
+/archive/
+
+# Windows and IDE files
+Thumbs.db
+Desktop.ini
+.vs/
+*.user
+*.suo
+*.pdb
+*.log
+*.tmp
