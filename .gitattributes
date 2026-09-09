@@ -1,0 +1,13 @@
+* text=auto
+*.cs text eol=crlf
+*.ps1 text eol=crlf
+*.md text eol=lf
+*.xml text eol=lf
+*.manifest text eol=lf
+*.rc text eol=crlf
+*.exe binary
+*.pdb binary
+*.zip binary
+*.ico binary
+*.png binary
+
