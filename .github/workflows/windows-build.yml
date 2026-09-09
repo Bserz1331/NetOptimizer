@@ -30,9 +30,9 @@ jobs:
             '--gui-startup-test'
           )
           foreach ($test in $tests) {
-            & $exe $test
-            if ($LASTEXITCODE -ne 0) {
-              throw "Test failed: $test (exit code $LASTEXITCODE)"
+            $process = Start-Process -FilePath $exe -ArgumentList $test -Wait -PassThru -NoNewWindow
+            if ($process.ExitCode -ne 0) {
+              throw "Test failed: $test (exit code $($process.ExitCode))"
             }
           }
 
