@@ -114,10 +114,22 @@ namespace NetOptimizerV2
         private bool beginnerMode = true;
         private bool beginnerLogExpanded;
         private bool restoringNetwork;
+        private AppLanguage currentLanguage;
+        private bool applyingLanguage;
+        private string lastProbeSummary = string.Empty;
+        private bool hasProbeResult;
+        private string lastProbeTarget = string.Empty;
+        private int lastProbePort;
+        private int lastProbeLatencyMs;
+        private ProbeState lastProbeState;
+        private int lastProbeIntervalMs;
+        private bool lastProbeHealthy;
+        private bool monitoringEverStarted;
         private ComboBox beginnerPrimaryInterfaceBox;
         private ComboBox beginnerBackupInterfaceBox;
         private CheckBox beginnerFailoverBox;
         private CheckBox beginnerAutoRepairBox;
+        private ComboBox languageBox;
 
         private sealed class AutoDetectSelection
         {
@@ -130,6 +142,8 @@ namespace NetOptimizerV2
         {
             string warning;
             settings = SettingsStore.Load(out warning);
+            currentLanguage = Localization.Normalize(settings.Language);
+            settings.Language = currentLanguage;
             RecoveryReport recovery = null;
             try
             {
@@ -139,9 +153,10 @@ namespace NetOptimizerV2
             catch (Exception ex)
             {
                 recovery = new RecoveryReport();
-                recovery.Messages.Add("A/B recovery 檢查失敗：" + ex.Message);
+                recovery.Messages.Add(L("A/B recovery 檢查失敗：") + ex.Message);
             }
             BuildUi();
+            ApplyLanguageToUi(false);
             PopulateInterfaces();
             ApplySettingsToUi();
             engine.LogRaised += Engine_LogRaised;
@@ -238,7 +253,7 @@ namespace NetOptimizerV2
                 BackColor = Background,
                 ColumnCount = 3,
                 RowCount = 1,
-                Margin = new Padding(0, 0, 0, 8)
+                Margin = new Padding(0, 0, 0, 7)
             };
             headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64F));
             headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -284,11 +299,40 @@ namespace NetOptimizerV2
             lastProbeValue.AutoEllipsis = true;
             headerStatusLayout.Controls.Add(statusValue, 0, 0);
             headerStatusLayout.Controls.Add(lastProbeValue, 0, 1);
+            TableLayoutPanel headerActions = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Background,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0, 2, 0, 0),
+                Padding = new Padding(0)
+            };
+            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108F));
             modeButton = ButtonOf("進階設定 ▸", 0, 0, 128, 24, false);
             modeButton.Dock = DockStyle.Fill;
-            modeButton.Margin = new Padding(0, 2, 0, 0);
+            modeButton.Margin = new Padding(0, 0, 6, 0);
             modeButton.Click += delegate { ToggleUiMode(); };
-            headerStatusLayout.Controls.Add(modeButton, 0, 2);
+            headerActions.Controls.Add(modeButton, 0, 0);
+            languageBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(17, 18, 20),
+                ForeColor = TextColor,
+                FlatStyle = FlatStyle.Flat,
+                Dock = DockStyle.None,
+                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+                AutoSize = false,
+                Height = 25,
+                Margin = new Padding(0, 0, 0, 2)
+            };
+            languageBox.Items.Add(Localization.LanguageName(AppLanguage.TraditionalChinese));
+            languageBox.Items.Add(Localization.LanguageName(AppLanguage.English));
+            languageBox.SelectedIndex = 0;
+            languageBox.SelectedIndexChanged += LanguageBox_SelectedIndexChanged;
+            headerActions.Controls.Add(languageBox, 1, 0);
+            headerStatusLayout.Controls.Add(headerActions, 0, 2);
             headerLayout.Controls.Add(headerStatusLayout, 2, 0);
             mainLayout.Controls.Add(headerLayout, 0, 0);
             uiToolTip.SetToolTip(brandImage, "NetOptimizer 網路監測與備援工具");
@@ -397,6 +441,7 @@ namespace NetOptimizerV2
                 Margin = new Padding(0, 4, 0, 0)
             };
             failoverAdvancedButton.FlatAppearance.BorderColor = Color.FromArgb(59, 64, 71);
+            Localization.Mark(failoverAdvancedButton, "進階設定 ▸");
             failoverAdvancedButton.Click += delegate
             {
                 advancedExpanded = !advancedExpanded;
@@ -521,6 +566,7 @@ namespace NetOptimizerV2
                 Font = new Font("Microsoft JhengHei UI", 9F),
                 Visible = true
             };
+            Localization.Mark(logEmptyLabel, "尚未開始監測");
             logSurface.Controls.Add(logBox);
             logSurface.Controls.Add(logEmptyLabel);
             logGroup.Controls.Add(logSurface);
@@ -568,18 +614,29 @@ namespace NetOptimizerV2
             trayMenu = new ContextMenuStrip();
             trayStart = new ToolStripMenuItem("開始監測");
             trayStop = new ToolStripMenuItem("停止監測");
+            Localization.Mark(trayStart, "開始監測");
+            Localization.Mark(trayStop, "停止監測");
             trayStart.Click += StartButton_Click;
             trayStop.Click += delegate { StopMonitoring(); };
-            trayMenu.Items.Add("顯示主視窗", null, delegate { ShowFromTray(); });
+            ToolStripMenuItem trayShowItem = new ToolStripMenuItem("顯示主視窗", null, delegate { ShowFromTray(); });
+            Localization.Mark(trayShowItem, "顯示主視窗");
+            trayMenu.Items.Add(trayShowItem);
             trayMenu.Items.Add(new ToolStripSeparator());
             trayMenu.Items.Add(trayStart);
             trayMenu.Items.Add(trayStop);
-            trayMenu.Items.Add("立即刷新", null, delegate { RefreshButton_Click(this, EventArgs.Empty); });
+            ToolStripMenuItem trayRefreshItem = new ToolStripMenuItem("立即刷新", null, delegate { RefreshButton_Click(this, EventArgs.Empty); });
+            Localization.Mark(trayRefreshItem, "立即刷新");
+            trayMenu.Items.Add(trayRefreshItem);
             trayMenu.Items.Add(new ToolStripSeparator());
             trayAdmin = new ToolStripMenuItem("以系統管理員重新啟動", null, delegate { RestartAsAdministrator(); });
+            Localization.Mark(trayAdmin, "以系統管理員重新啟動");
             trayMenu.Items.Add(trayAdmin);
-            trayMenu.Items.Add("支持開發", null, delegate { OpenSupportDialog(); });
-            trayMenu.Items.Add("結束", null, delegate { Close(); });
+            ToolStripMenuItem traySupportItem = new ToolStripMenuItem("支持開發", null, delegate { OpenSupportDialog(); });
+            Localization.Mark(traySupportItem, "支持開發");
+            trayMenu.Items.Add(traySupportItem);
+            ToolStripMenuItem trayExitItem = new ToolStripMenuItem("結束", null, delegate { Close(); });
+            Localization.Mark(trayExitItem, "結束");
+            trayMenu.Items.Add(trayExitItem);
             tray.ContextMenuStrip = trayMenu;
             tray.MouseDoubleClick += delegate(object sender, MouseEventArgs e)
             {
@@ -593,6 +650,146 @@ namespace NetOptimizerV2
             interfaceBox.TextChanged += delegate { UpdateInterfaceTooltip(interfaceBox); };
             primaryInterfaceBox.TextChanged += delegate { UpdateInterfaceTooltip(primaryInterfaceBox); };
             backupInterfaceBox.TextChanged += delegate { UpdateInterfaceTooltip(backupInterfaceBox); };
+        }
+
+        private string L(string source)
+        {
+            return Localization.Get(currentLanguage, source);
+        }
+
+        private void LanguageBox_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (applyingLanguage || languageBox == null || languageBox.SelectedIndex < 0)
+            {
+                return;
+            }
+
+            currentLanguage = languageBox.SelectedIndex == 1
+                ? AppLanguage.English
+                : AppLanguage.TraditionalChinese;
+            ApplyLanguageToUi(true);
+        }
+
+        private void ApplyLanguageToUi(bool persist)
+        {
+            currentLanguage = Localization.Normalize(currentLanguage);
+            applyingLanguage = true;
+            try
+            {
+                if (languageBox != null)
+                {
+                    languageBox.SelectedIndex = currentLanguage == AppLanguage.English ? 1 : 0;
+                }
+            }
+            finally
+            {
+                applyingLanguage = false;
+            }
+
+            Localization.Apply(this, currentLanguage);
+            Localization.ApplyItems(trayMenu, currentLanguage);
+            Localization.ApplyItems(logMenu, currentLanguage);
+            Text = L("NetOptimizer");
+            if (tray != null) { tray.Text = L("NetOptimizer"); }
+            lastProbeSummary = FormatLastProbeSummary();
+            if (lastProbeValue != null)
+            {
+                lastProbeValue.Text = hasProbeResult
+                    ? L("最近探測：") + lastProbeSummary
+                    : L("最近探測：尚未測試");
+            }
+            if (statusValue != null)
+            {
+                if (engine.IsRunning)
+                {
+                    statusValue.Text = lastProbeIntervalMs > 0
+                        ? L("狀態：") + L("監測中") + " · " + L("下次約 ") + lastProbeIntervalMs + " ms"
+                        : L("狀態：") + L("監測中");
+                    statusValue.ForeColor = hasProbeResult && !lastProbeHealthy ? Warning : Accent;
+                }
+                else
+                {
+                    statusValue.Text = L("狀態：") + L(monitoringEverStarted ? "已停止" : "未啟動");
+                    statusValue.ForeColor = MutedText;
+                }
+            }
+            UpdateLocalizedTooltips();
+            UpdatePermissionText();
+            UpdateFailoverStatusDisplay();
+            UpdateFailoverAdvanced();
+            UpdateBeginnerStatus();
+            UpdateUiMode();
+
+            if (settings != null)
+            {
+                settings.Language = currentLanguage;
+            }
+            if (persist && !closing)
+            {
+                SaveLanguagePreference();
+            }
+        }
+
+        private void SaveLanguagePreference()
+        {
+            try
+            {
+                MonitorSettings next;
+                try
+                {
+                    next = ReadSettingsFromUi();
+                }
+                catch
+                {
+                    next = settings == null ? MonitorSettings.CreateDefault() : settings.Clone();
+                }
+                next.Language = currentLanguage;
+                next.Normalize();
+                SettingsStore.Save(next);
+                settings = next;
+            }
+            catch (Exception ex)
+            {
+                AppendLog(L("語言設定儲存失敗：") + ex.Message, true);
+            }
+        }
+
+        private void UpdateLocalizedTooltips()
+        {
+            if (uiToolTip == null) { return; }
+            uiToolTip.SetToolTip(brandImage, L("NetOptimizer 網路監測與備援工具"));
+            uiToolTip.SetToolTip(statusValue, L("監測器目前狀態與下一次背景探測時間。"));
+            uiToolTip.SetToolTip(lastProbeValue, lastProbeSummary.Length == 0
+                ? L("最近一次 TCP 探測結果。")
+                : L("完整結果：") + lastProbeSummary);
+            uiToolTip.SetToolTip(languageBox, L("選擇介面語言。"));
+            uiToolTip.SetToolTip(targetsBox, L("可輸入 IP 或網域，使用逗號分隔。"));
+            uiToolTip.SetToolTip(enableRefreshBox, L("連續異常時執行已勾選的刷新動作。"));
+            uiToolTip.SetToolTip(dnsBox, L("清除 DNS 快取。"));
+            uiToolTip.SetToolTip(arpBox, L("清除 ARP 快取。"));
+            uiToolTip.SetToolTip(mtuBox, L("暫時套用 1471 MTU，再復原原值。"));
+            uiToolTip.SetToolTip(failoverAdvancedButton, L("顯示或隱藏 A/B 與 EWMA 調校參數。"));
+            uiToolTip.SetToolTip(failoverStatusValue, failoverStatusValue == null
+                ? string.Empty : failoverStatusValue.Text);
+            uiToolTip.SetToolTip(failoverHealthValue, failoverHealthValue == null
+                ? string.Empty : failoverHealthValue.Text);
+            uiToolTip.SetToolTip(adminButton, L("重新啟動並要求系統管理員權限；不會自動提權。"));
+            uiToolTip.SetToolTip(supportButton, L("開啟支持開發選項：Ko-fi 與加密貨幣地址。"));
+            uiToolTip.SetToolTip(logBox, L("右鍵可複製或清除紀錄，也可暫停自動捲動。"));
+            UpdateInterfaceTooltip(interfaceBox);
+            UpdateInterfaceTooltip(primaryInterfaceBox);
+            UpdateInterfaceTooltip(backupInterfaceBox);
+            UpdateInterfaceTooltip(beginnerPrimaryInterfaceBox);
+            UpdateInterfaceTooltip(beginnerBackupInterfaceBox);
+        }
+
+        private string FormatLastProbeSummary()
+        {
+            if (!hasProbeResult) { return string.Empty; }
+            string resultText = lastProbeState == ProbeState.Success
+                ? lastProbeLatencyMs + " ms"
+                : (lastProbeState == ProbeState.Timeout ? "timeout" : L("失敗"));
+            return lastProbeTarget + ":" + lastProbePort + " → " + resultText;
         }
 
         private GroupBox BuildBeginnerPanel()
@@ -766,9 +963,9 @@ namespace NetOptimizerV2
                     if (beginnerMode) { SyncBeginnerSettingsToAdvanced(); }
                     UpdateBeginnerStatus();
                     string noReadyMessage =
-                        "自動偵測未找到任何就緒網路；主要與備援已留空。" + Environment.NewLine +
-                        "請先連線 Wi‑Fi 或藍牙網路，再按「重新偵測網路」。";
-                    AppendLog("自動偵測：沒有找到具 IPv4 與 gateway 的就緒網路。", true);
+                        L("自動偵測未找到任何就緒網路；主要與備援已留空。") + Environment.NewLine +
+                        L("請先連線 Wi‑Fi 或藍牙網路，再按「重新偵測網路」。");
+                    AppendLog(L("自動偵測：沒有找到具 IPv4 與 gateway 的就緒網路。"), true);
                     if (showPrompt)
                     {
                         MessageBox.Show(this, noReadyMessage, "NetOptimizer",
@@ -792,10 +989,11 @@ namespace NetOptimizerV2
                 if (selection.Backup == null)
                 {
                     string oneReadyMessage =
-                        "已找到主要網路「" + selection.Primary.Name + "」，但沒有第二條就緒線路。" +
+                        L("已找到主要網路「") + selection.Primary.Name + L("」，但沒有第二條就緒線路。") +
                         Environment.NewLine +
-                        "備援已留空；請再連線另一條具 IPv4 與 gateway 的網路。";
-                    AppendLog("已重新偵測網路：主要「" + selection.Primary.Name + "」；備援未找到，已留空。", true);
+                        L("備援已留空；請再連線另一條具 IPv4 與 gateway 的網路。");
+                    AppendLog(L("已重新偵測網路：主要「") + selection.Primary.Name +
+                              L("」；備援未找到，已留空。"), true);
                     if (showPrompt)
                     {
                         MessageBox.Show(this, oneReadyMessage, "NetOptimizer",
@@ -804,16 +1002,16 @@ namespace NetOptimizerV2
                 }
                 else
                 {
-                    AppendLog("已重新偵測網路：主要「" + selection.Primary.Name + "」；備援「" +
-                              selection.Backup.Name + "」。", false);
+                    AppendLog(L("已重新偵測網路：主要「") + selection.Primary.Name + L("」；備援「") +
+                              selection.Backup.Name + L("」。"), false);
                 }
             }
             catch (Exception ex)
             {
-                AppendLog("自動偵測網路失敗：" + ex.Message, true);
+                AppendLog(L("自動偵測網路失敗：") + ex.Message, true);
                 if (showPrompt)
                 {
-                    MessageBox.Show(this, "無法完成網路偵測。" + Environment.NewLine + ex.Message,
+                    MessageBox.Show(this, L("無法完成網路偵測。") + Environment.NewLine + ex.Message,
                                     "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
             }
@@ -867,7 +1065,7 @@ namespace NetOptimizerV2
             if (restoringNetwork) { return; }
             if (engine.IsRunning)
             {
-                MessageBox.Show(this, "請先停止自動保護，再執行復原。",
+                MessageBox.Show(this, L("請先停止自動保護，再執行復原。"),
                                 "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -879,32 +1077,32 @@ namespace NetOptimizerV2
                 RecoveryReport report = await FailoverManager.RecoverPendingAsync(CancellationToken.None);
                 foreach (string message in report.Messages)
                 {
-                    AppendLog("復原：" + message, !report.Restored);
+                    AppendLog(L("復原：") + message, !report.Restored);
                 }
 
                 string summary;
                 MessageBoxIcon icon;
                 if (!report.FoundJournal)
                 {
-                    summary = "目前沒有待復原的 A/B 網路變更。";
+                    summary = L("目前沒有待復原的 A/B 網路變更。");
                     icon = MessageBoxIcon.Information;
                 }
                 else if (report.Restored)
                 {
-                    summary = "上一筆 A/B 網路變更已完成復原。";
+                    summary = L("上一筆 A/B 網路變更已完成復原。");
                     icon = MessageBoxIcon.Information;
                 }
                 else
                 {
-                    summary = "目前無法完整復原上一筆變更。請以系統管理員身分重試，或查看執行紀錄。";
+                    summary = L("目前無法完整復原上一筆變更。請以系統管理員身分重試，或查看執行紀錄。");
                     icon = MessageBoxIcon.Warning;
                 }
                 MessageBox.Show(this, summary, "NetOptimizer", MessageBoxButtons.OK, icon);
             }
             catch (Exception ex)
             {
-                AppendLog("手動復原失敗：" + ex.Message, true);
-                MessageBox.Show(this, "復原失敗。" + Environment.NewLine + ex.Message,
+                AppendLog(L("手動復原失敗：") + ex.Message, true);
+                MessageBox.Show(this, L("復原失敗。") + Environment.NewLine + ex.Message,
                                 "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally
@@ -945,6 +1143,20 @@ namespace NetOptimizerV2
                 if (form.brandImage == null || form.brandImage.Image == null)
                 {
                     throw new InvalidOperationException("品牌圖示未載入。");
+                }
+                AppLanguage savedLanguage = form.currentLanguage;
+                form.currentLanguage = AppLanguage.English;
+                form.ApplyLanguageToUi(false);
+                bool englishUiReady = form.languageBox != null &&
+                                      form.languageBox.SelectedIndex == 1 &&
+                                      form.beginnerPanel.Text == "Quick start" &&
+                                      form.beginnerStartButton.Text == "Start protection" &&
+                                      form.supportButton.Text == "☕ Support";
+                form.currentLanguage = savedLanguage;
+                form.ApplyLanguageToUi(false);
+                if (!englishUiReady)
+                {
+                    throw new InvalidOperationException("English UI localization did not apply completely.");
                 }
                 AssertNoNotPresentInterfaceItems(form, "初始");
                 SupportDialog.RunUiSelfTest();
@@ -1148,6 +1360,11 @@ namespace NetOptimizerV2
 
         internal static void SaveUiSnapshot(string outputPath)
         {
+            SaveUiSnapshot(outputPath, AppLanguage.TraditionalChinese);
+        }
+
+        internal static void SaveUiSnapshot(string outputPath, AppLanguage language)
+        {
             if (string.IsNullOrWhiteSpace(outputPath))
             {
                 throw new ArgumentException("Snapshot output path is required.", "outputPath");
@@ -1161,6 +1378,8 @@ namespace NetOptimizerV2
 
             using (MainForm form = new MainForm())
             {
+                form.currentLanguage = Localization.Normalize(language);
+                form.ApplyLanguageToUi(false);
                 form.ShowInTaskbar = false;
                 form.StartPosition = FormStartPosition.Manual;
                 form.Location = new Point(20, 20);
@@ -1296,7 +1515,8 @@ namespace NetOptimizerV2
         {
             if (form.headerLayout == null || form.headerStatusLayout == null ||
                 form.titleLabel == null || form.statusValue == null ||
-                form.lastProbeValue == null || form.modeButton == null)
+                form.lastProbeValue == null || form.modeButton == null ||
+                form.languageBox == null)
             {
                 throw new InvalidOperationException(stage + "標題區控制項未完整建立。");
             }
@@ -1311,7 +1531,8 @@ namespace NetOptimizerV2
                 form.titleLabel,
                 form.statusValue,
                 form.lastProbeValue,
-                form.modeButton
+                form.modeButton,
+                form.languageBox
             };
             foreach (Control control in controls)
             {
@@ -1418,10 +1639,12 @@ namespace NetOptimizerV2
             logMenu = new ContextMenuStrip();
 
             ToolStripMenuItem copyAllItem = new ToolStripMenuItem("複製全部紀錄");
+            Localization.Mark(copyAllItem, "複製全部紀錄");
             copyAllItem.Click += delegate { CopyLog(); };
             logMenu.Items.Add(copyAllItem);
 
             ToolStripMenuItem clearItem = new ToolStripMenuItem("清除紀錄");
+            Localization.Mark(clearItem, "清除紀錄");
             clearItem.Click += delegate { ClearLog(); };
             logMenu.Items.Add(clearItem);
             logMenu.Items.Add(new ToolStripSeparator());
@@ -1431,6 +1654,7 @@ namespace NetOptimizerV2
                 CheckOnClick = true,
                 Checked = followLog
             };
+            Localization.Mark(followLogItem, "自動捲到最新");
             followLogItem.CheckedChanged += delegate
             {
                 followLog = followLogItem.Checked;
@@ -1451,7 +1675,7 @@ namespace NetOptimizerV2
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "無法複製紀錄。" + Environment.NewLine + ex.Message,
+                MessageBox.Show(this, L("無法複製紀錄。") + Environment.NewLine + ex.Message,
                                 "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
@@ -1461,7 +1685,7 @@ namespace NetOptimizerV2
             if (logBox == null || visibleLog.Count == 0) { return; }
             DialogResult result = MessageBox.Show(
                 this,
-                "確定要清除目前執行紀錄嗎？清除後仍可重新匯出之後的新紀錄。",
+                L("確定要清除目前執行紀錄嗎？清除後仍可重新匯出之後的新紀錄。"),
                 "NetOptimizer",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
@@ -1490,23 +1714,23 @@ namespace NetOptimizerV2
             string name = (box.Text ?? string.Empty).Trim();
             if (name.Length == 0)
             {
-                uiToolTip.SetToolTip(box, "可直接輸入 Windows 網路介面名稱。");
+                uiToolTip.SetToolTip(box, L("可直接輸入 Windows 網路介面名稱。"));
                 return;
             }
 
             InterfaceSnapshot snapshot = NetworkInfo.GetInterfaceSnapshot(name);
             if (snapshot == null)
             {
-                uiToolTip.SetToolTip(box, "尚未取得這張介面的 IPv4 與 gateway。");
+                uiToolTip.SetToolTip(box, L("尚未取得這張介面的 IPv4 與 gateway。"));
                 return;
             }
 
             uiToolTip.SetToolTip(
                 box,
-                "狀態：" + snapshot.Status + Environment.NewLine +
-                "IPv4：" + (string.IsNullOrWhiteSpace(snapshot.IPv4) ? "無" : snapshot.IPv4) + Environment.NewLine +
-                "Gateway：" + (string.IsNullOrWhiteSpace(snapshot.Gateway) ? "無" : snapshot.Gateway) + Environment.NewLine +
-                "就緒：" + (snapshot.IsReady ? "是" : "否"));
+                L("狀態：") + snapshot.Status + Environment.NewLine +
+                L("IPv4：") + (string.IsNullOrWhiteSpace(snapshot.IPv4) ? L("無") : snapshot.IPv4) + Environment.NewLine +
+                L("Gateway：") + (string.IsNullOrWhiteSpace(snapshot.Gateway) ? L("無") : snapshot.Gateway) + Environment.NewLine +
+                L("就緒：") + (snapshot.IsReady ? L("是") : L("否")));
         }
 
         private void ApplySettingsToUi()
@@ -1617,29 +1841,29 @@ namespace NetOptimizerV2
             next.PulseMtu = mtuBox.Checked;
             if (next.InterfaceName.Length == 0)
             {
-                throw new InvalidOperationException("請先選擇網卡。 ");
+                throw new InvalidOperationException(L("請先選擇網卡。 "));
             }
             if (next.Targets.Count == 0)
             {
-                throw new InvalidOperationException("請至少填寫一個測試目標。 ");
+                throw new InvalidOperationException(L("請至少填寫一個測試目標。 "));
             }
             if (next.FailoverEnabled)
             {
                 if (next.PrimaryInterface.Length == 0 || next.BackupInterface.Length == 0)
                 {
-                    throw new InvalidOperationException("啟用 A/B 切換時，請同時指定主線 A 與備援 B。 ");
+                    throw new InvalidOperationException(L("啟用 A/B 切換時，請同時指定主線 A 與備援 B。 "));
                 }
                 if (string.Equals(next.PrimaryInterface, next.BackupInterface, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new InvalidOperationException("主線 A 與備援 B 不能是同一張網卡。 ");
+                    throw new InvalidOperationException(L("主線 A 與備援 B 不能是同一張網卡。 "));
                 }
                 if (next.FailoverTargets.Count == 0)
                 {
-                    throw new InvalidOperationException("啟用 A/B 切換時，請至少填寫一個故障切換測試目標。 ");
+                    throw new InvalidOperationException(L("啟用 A/B 切換時，請至少填寫一個故障切換測試目標。 "));
                 }
                 if (next.FailoverPrimaryMetric >= next.FailoverBackupMetric)
                 {
-                    throw new InvalidOperationException("A metric 必須小於 B metric，才能讓 A/B 優先順序明確。 ");
+                    throw new InvalidOperationException(L("A metric 必須小於 B metric，才能讓 A/B 優先順序明確。 "));
                 }
             }
             next.Normalize();
@@ -1652,12 +1876,12 @@ namespace NetOptimizerV2
             {
                 settings = ReadSettingsFromUi();
                 SettingsStore.Save(settings);
-                AppendLog("設定已儲存：" + SettingsStore.SettingsPath, false);
+                AppendLog(L("設定已儲存：") + SettingsStore.SettingsPath, false);
                 return true;
             }
             catch (Exception ex)
             {
-                AppendLog("儲存設定失敗：" + ex.Message, true);
+                AppendLog(L("儲存設定失敗：") + ex.Message, true);
                 if (showError)
                 {
                     MessageBox.Show(this, ex.Message, "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1676,10 +1900,10 @@ namespace NetOptimizerV2
             if (failoverEnabledBox != null && failoverEnabledBox.Checked &&
                 !NetworkInfo.IsAdministrator())
             {
-                const string message =
-                    "A/B 自動切換需要系統管理員權限，已阻止啟動。" +
-                    "請按「重新以管理員啟動」後再開始監測。";
-                AppendLog("A/B 啟動已阻止：目前不是系統管理員。", true);
+                string message =
+                    L("A/B 自動切換需要系統管理員權限，已阻止啟動。") +
+                    L("請按「重新以管理員啟動」後再開始監測。");
+                AppendLog(L("A/B 啟動已阻止：目前不是系統管理員。"), true);
                 if (adminButton != null)
                 {
                     adminButton.Visible = true;
@@ -1688,7 +1912,7 @@ namespace NetOptimizerV2
                 }
                 if (showError)
                 {
-                    MessageBox.Show(this, message, "需要管理員權限",
+                    MessageBox.Show(this, message, L("需要管理員權限"),
                                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
                 return false;
@@ -1696,7 +1920,8 @@ namespace NetOptimizerV2
 
             if (!TrySaveSettings(showError)) { return false; }
             engine.Start(settings);
-            statusValue.Text = "狀態：監測中";
+            monitoringEverStarted = true;
+            statusValue.Text = L("狀態：") + L("監測中");
             statusValue.ForeColor = Accent;
             UpdateBeginnerStatus();
             UpdateButtons();
@@ -1708,7 +1933,7 @@ namespace NetOptimizerV2
             engine.Stop();
             if (statusValue != null)
             {
-                statusValue.Text = "狀態：已停止";
+                statusValue.Text = L("狀態：") + L("已停止");
                 statusValue.ForeColor = MutedText;
             }
             UpdateBeginnerStatus();
@@ -1733,8 +1958,8 @@ namespace NetOptimizerV2
 
             using (SaveFileDialog dialog = new SaveFileDialog())
             {
-                dialog.Title = "匯出 NetOptimizer 診斷報告";
-                dialog.Filter = "文字報告 (*.txt)|*.txt|所有檔案 (*.*)|*.*";
+                dialog.Title = L("匯出 NetOptimizer 診斷報告");
+                dialog.Filter = L("文字報告 (*.txt)|*.txt|所有檔案 (*.*)|*.*");
                 dialog.FileName = "NetOptimizer-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt";
                 dialog.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
                 if (dialog.ShowDialog(this) != DialogResult.OK) { return; }
@@ -1749,13 +1974,13 @@ namespace NetOptimizerV2
                         visibleLog.ToArray(),
                         latestFailoverStatus,
                         CancellationToken.None);
-                    AppendLog("診斷報告已匯出：" + dialog.FileName, false);
-                    MessageBox.Show(this, "診斷報告已匯出。報告包含網卡、IP、route 與近期 log，請確認內容後再分享。",
+                    AppendLog(L("診斷報告已匯出：") + dialog.FileName, false);
+                    MessageBox.Show(this, L("診斷報告已匯出。報告包含網卡、IP、route 與近期 log，請確認內容後再分享。"),
                                     "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
                 {
-                    AppendLog("匯出診斷失敗：" + ex.Message, true);
+                    AppendLog(L("匯出診斷失敗：") + ex.Message, true);
                     MessageBox.Show(this, ex.Message, "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
                 finally
@@ -1776,6 +2001,16 @@ namespace NetOptimizerV2
             RunOnUi(delegate
             {
                 ProbeResult result = e.Result;
+                hasProbeResult = result != null;
+                if (result != null)
+                {
+                    lastProbeTarget = result.Target ?? string.Empty;
+                    lastProbePort = result.Port;
+                    lastProbeLatencyMs = result.LatencyMs;
+                    lastProbeState = result.State;
+                    lastProbeIntervalMs = e.IntervalMs;
+                    lastProbeHealthy = result.IsHealthy(settings.ThresholdMs);
+                }
                 string resultText;
                 if (result.State == ProbeState.Success)
                 {
@@ -1783,19 +2018,20 @@ namespace NetOptimizerV2
                 }
                 else
                 {
-                    resultText = result.State == ProbeState.Timeout ? "timeout" : "失敗";
+                    resultText = result.State == ProbeState.Timeout ? "timeout" : L("失敗");
                 }
-                lastProbeValue.Text = "最近探測：" + result.Target + ":" + result.Port + " → " + resultText;
-                statusValue.Text = "狀態：監測中 · 下次約 " + e.IntervalMs + " ms";
+                lastProbeSummary = FormatLastProbeSummary();
+                lastProbeValue.Text = L("最近探測：") + lastProbeSummary;
+                statusValue.Text = L("狀態：") + L("監測中") + " · " + L("下次約 ") + e.IntervalMs + " ms";
                 statusValue.ForeColor = result.IsHealthy(settings.ThresholdMs) ? Accent : Warning;
                 UpdateBeginnerStatus();
                 if (uiToolTip != null)
                 {
-                    uiToolTip.SetToolTip(lastProbeValue, "完整結果：" + result.Target + ":" + result.Port + " → " + resultText);
+                    uiToolTip.SetToolTip(lastProbeValue, L("完整結果：") + lastProbeSummary);
                 }
                 if (!result.IsHealthy(settings.ThresholdMs) && result.State != ProbeState.Cancelled)
                 {
-                    AppendLog("探測異常：" + result.Target + " → " + resultText +
+                    AppendLog(L("探測異常：") + result.Target + " → " + resultText +
                               (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : "（" + result.Error + "）"), true);
                 }
             });
@@ -1803,40 +2039,44 @@ namespace NetOptimizerV2
 
         private void Engine_FailoverStatusChanged(object sender, FailoverStatusEventArgs e)
         {
-            FailoverStatus status = e.Status;
-            latestFailoverStatus = status == null ? null : status.Clone();
+            latestFailoverStatus = e.Status == null ? null : e.Status.Clone();
             RunOnUi(delegate
             {
+                UpdateFailoverStatusDisplay();
                 UpdateBeginnerStatus();
-                if (status == null || !status.Ready)
-                {
-                    failoverStatusValue.Text = "A/B：未啟用或尚未就緒";
-                    failoverStatusValue.ForeColor = MutedText;
-                    failoverHealthValue.Text = "健康度：尚未測試";
-                    if (uiToolTip != null)
-                    {
-                        uiToolTip.SetToolTip(failoverStatusValue, failoverStatusValue.Text);
-                        uiToolTip.SetToolTip(failoverHealthValue, failoverHealthValue.Text);
-                    }
-                    UpdateBeginnerStatus();
-                    return;
-                }
-                string mode = status.InFailover ? "故障切換中" :
-                              (status.SmartSelection ? "智慧選路" : "主線優先");
-                failoverStatusValue.Text = "目前 " + status.ActiveInterface +
-                                           "／備援 " + status.StandbyInterface + " · " + mode +
-                                           " · 切換 " + status.SwitchCount + " 次";
-                failoverStatusValue.ForeColor = status.InFailover ? Warning : Accent;
-                failoverHealthValue.Text = "A/B 健康度：" + status.ActiveHealth +
-                                           " | " + status.StandbyHealth;
-                failoverHealthValue.ForeColor = status.InFailover ? Warning : MutedText;
+            });
+        }
+
+        private void UpdateFailoverStatusDisplay()
+        {
+            FailoverStatus status = latestFailoverStatus;
+            if (status == null || !status.Ready)
+            {
+                failoverStatusValue.Text = L("A/B：未啟用或尚未就緒");
+                failoverStatusValue.ForeColor = MutedText;
+                failoverHealthValue.Text = L("健康度：尚未測試");
+                failoverHealthValue.ForeColor = MutedText;
                 if (uiToolTip != null)
                 {
                     uiToolTip.SetToolTip(failoverStatusValue, failoverStatusValue.Text);
                     uiToolTip.SetToolTip(failoverHealthValue, failoverHealthValue.Text);
                 }
-                UpdateBeginnerStatus();
-            });
+                return;
+            }
+            string mode = status.InFailover ? L("故障切換中") :
+                          (status.SmartSelection ? L("智慧選路") : L("主線優先"));
+            failoverStatusValue.Text = L("目前 ") + status.ActiveInterface +
+                                       L("／備援 ") + status.StandbyInterface + " · " + mode +
+                                       L(" · 切換 ") + status.SwitchCount + " " + L("次");
+            failoverStatusValue.ForeColor = status.InFailover ? Warning : Accent;
+            failoverHealthValue.Text = L("A/B 健康度：") + status.ActiveHealth +
+                                       " | " + status.StandbyHealth;
+            failoverHealthValue.ForeColor = status.InFailover ? Warning : MutedText;
+            if (uiToolTip != null)
+            {
+                uiToolTip.SetToolTip(failoverStatusValue, failoverStatusValue.Text);
+                uiToolTip.SetToolTip(failoverHealthValue, failoverHealthValue.Text);
+            }
         }
 
         private void UpdatePermissionText()
@@ -1844,24 +2084,24 @@ namespace NetOptimizerV2
             string permissionTip;
             if (NetworkInfo.IsAdministrator())
             {
-                permissionValue.Text = "權限：管理員";
+                permissionValue.Text = L("權限：管理員");
                 permissionValue.ForeColor = Accent;
-                permissionTip = "系統管理員；ARP／MTU／A-B metric 動作可正常嘗試。";
+                permissionTip = L("系統管理員；ARP／MTU／A-B metric 動作可正常嘗試。");
                 if (adminButton != null)
                 {
                     adminButton.Visible = false;
-                    adminButton.Text = "重新以管理員啟動";
+                    adminButton.Text = L("重新以管理員啟動");
                 }
             }
             else
             {
-                permissionValue.Text = "權限：一般使用者";
+                permissionValue.Text = L("權限：一般使用者");
                 permissionValue.ForeColor = Warning;
-                permissionTip = "一般使用者；DNS 通常可執行，ARP／MTU／A-B metric 可能需要系統管理員。";
+                permissionTip = L("一般使用者；DNS 通常可執行，ARP／MTU／A-B metric 可能需要系統管理員。");
                 if (adminButton != null)
                 {
                     adminButton.Visible = true;
-                    adminButton.Text = "重新以管理員啟動";
+                    adminButton.Text = L("重新以管理員啟動");
                 }
             }
             if (uiToolTip != null) { uiToolTip.SetToolTip(permissionValue, permissionTip); }
@@ -1887,13 +2127,13 @@ namespace NetOptimizerV2
         {
             if (modeButton != null)
             {
-                modeButton.Text = beginnerMode ? "顯示進階設定 ▸" : "切換新手模式";
+                modeButton.Text = beginnerMode ? L("顯示進階設定 ▸") : L("切換新手模式");
                 if (uiToolTip != null)
                 {
                     uiToolTip.SetToolTip(
                         modeButton,
-                        beginnerMode ? "顯示完整監測、刷新、A/B 與 EWMA 設定。" :
-                                        "回到簡化畫面，只保留一般使用者需要的選項。");
+                        beginnerMode ? L("顯示完整監測、刷新、A/B 與 EWMA 設定。") :
+                                        L("回到簡化畫面，只保留一般使用者需要的選項。"));
                 }
             }
             if (beginnerPanel != null) { beginnerPanel.Visible = beginnerMode; }
@@ -1911,7 +2151,7 @@ namespace NetOptimizerV2
             }
             if (beginnerLogButton != null)
             {
-                beginnerLogButton.Text = beginnerLogExpanded ? "隱藏執行紀錄 ▴" : "查看執行紀錄 ▸";
+                beginnerLogButton.Text = beginnerLogExpanded ? L("隱藏執行紀錄 ▴") : L("查看執行紀錄 ▸");
             }
             if (layoutRoot != null)
             {
@@ -1944,55 +2184,50 @@ namespace NetOptimizerV2
             if (beginnerPrimaryValue != null)
             {
                 beginnerPrimaryValue.Text = activeInterface.Length > 0
-                    ? "目前使用：" + activeInterface
-                    : (primary.Length == 0 ? "尚未選擇" : "已選擇：" + primary);
+                    ? L("目前使用：") + activeInterface
+                    : (primary.Length == 0 ? L("尚未選擇") : L("已選擇：") + primary);
             }
             if (beginnerBackupValue != null)
             {
-                beginnerBackupValue.Text = !failoverEnabled ? "未啟用" :
-                    (backup.Length == 0 ? "請選擇備援" :
-                     (backupIsActive ? "目前使用：" + backup : "待命：" + backup));
+                beginnerBackupValue.Text = !failoverEnabled ? L("未啟用") :
+                    (backup.Length == 0 ? L("請選擇備援") :
+                     (backupIsActive ? L("目前使用：") + backup : L("待命：") + backup));
             }
 
-            string probeSummary = lastProbeValue == null ? string.Empty : lastProbeValue.Text;
-            const string probePrefix = "最近探測：";
-            if (probeSummary.StartsWith(probePrefix, StringComparison.Ordinal))
-            {
-                probeSummary = probeSummary.Substring(probePrefix.Length).Trim();
-            }
+            string probeSummary = lastProbeSummary ?? string.Empty;
             if (beginnerPrimaryHealthValue != null)
             {
                 beginnerPrimaryHealthValue.Text = probeSummary.Length == 0 ||
-                                                  string.Equals(probeSummary, "尚未測試", StringComparison.OrdinalIgnoreCase)
-                    ? "尚未測試"
-                    : "最近：" + probeSummary;
+                                                  string.Equals(probeSummary, L("尚未測試"), StringComparison.OrdinalIgnoreCase)
+                    ? L("尚未測試")
+                    : L("最近：") + probeSummary;
                 beginnerPrimaryHealthValue.ForeColor = statusValue == null ? MutedText : statusValue.ForeColor;
             }
 
             if (beginnerBackupHealthValue != null)
             {
-                string backupHealth = !failoverEnabled ? "未啟用" : "等待監測";
+                string backupHealth = !failoverEnabled ? L("未啟用") : L("等待監測");
                 Color backupColor = MutedText;
                 if (failoverReady && backup.Length > 0)
                 {
                     if (backupIsActive)
                     {
-                        backupHealth = "健康度：" + (latestFailoverStatus.ActiveHealth ?? "尚未測試") + " · 目前使用中";
+                        backupHealth = L("健康度：") + (latestFailoverStatus.ActiveHealth ?? L("尚未測試")) + L(" · 目前使用中");
                     }
                     else if (string.Equals(latestFailoverStatus.StandbyInterface, backup,
                                            StringComparison.OrdinalIgnoreCase))
                     {
-                        backupHealth = "健康度：" + (latestFailoverStatus.StandbyHealth ?? "尚未測試") + " · 待命";
+                        backupHealth = L("健康度：") + (latestFailoverStatus.StandbyHealth ?? L("尚未測試")) + L(" · 待命");
                     }
                     else
                     {
-                        backupHealth = "健康度：尚未對應";
+                        backupHealth = L("健康度：尚未對應");
                     }
                     backupColor = latestFailoverStatus.InFailover ? Warning : MutedText;
                 }
                 else if (failoverEnabled && backup.Length == 0)
                 {
-                    backupHealth = "先選擇備援網路";
+                    backupHealth = L("先選擇備援網路");
                     backupColor = Warning;
                 }
                 beginnerBackupHealthValue.Text = backupHealth;
@@ -2012,7 +2247,7 @@ namespace NetOptimizerV2
         {
             if (failoverAdvancedPanel == null || failoverAdvancedButton == null) { return; }
             failoverAdvancedPanel.Visible = advancedExpanded;
-            failoverAdvancedButton.Text = advancedExpanded ? "進階設定 ▾" : "進階設定 ▸";
+            failoverAdvancedButton.Text = advancedExpanded ? L("進階設定 ▾") : L("進階設定 ▸");
         }
 
         private void UpdateFailoverEnabled()
@@ -2055,7 +2290,7 @@ namespace NetOptimizerV2
             if (beginnerStartButton != null)
             {
                 beginnerStartButton.Visible = beginnerMode;
-                beginnerStartButton.Text = running ? "停止自動保護" : "開始自動保護";
+                beginnerStartButton.Text = running ? L("停止自動保護") : L("開始自動保護");
                 beginnerStartButton.Enabled = !restoringNetwork && !exportingDiagnostics;
             }
             if (beginnerDetectButton != null)
@@ -2110,7 +2345,7 @@ namespace NetOptimizerV2
             {
                 ShowInTaskbar = false;
                 Hide();
-                tray.ShowBalloonTip(1200, "NetOptimizer", "監測仍在背景執行。", ToolTipIcon.Info);
+                tray.ShowBalloonTip(1200, "NetOptimizer", L("監測仍在背景執行。"), ToolTipIcon.Info);
             }
         }
 
@@ -2183,7 +2418,7 @@ namespace NetOptimizerV2
 
         private static GroupBox AutoGroupOf(string text)
         {
-            return new GroupBox
+            GroupBox group = new GroupBox
             {
                 Text = text,
                 ForeColor = TextColor,
@@ -2194,6 +2429,8 @@ namespace NetOptimizerV2
                 Padding = new Padding(10, 24, 10, 10),
                 Margin = new Padding(0, 0, 0, 8)
             };
+            Localization.Mark(group, text);
+            return group;
         }
 
         private static TableLayoutPanel GridOf(int columns)
@@ -2275,7 +2512,7 @@ namespace NetOptimizerV2
 
         private static Label CaptionOf(string text)
         {
-            return new Label
+            Label label = new Label
             {
                 Text = text,
                 AutoSize = true,
@@ -2286,6 +2523,8 @@ namespace NetOptimizerV2
                 TextAlign = ContentAlignment.MiddleLeft,
                 Margin = new Padding(0, 0, 6, 0)
             };
+            Localization.Mark(label, text);
+            return label;
         }
 
         private static TextBox TextBoxEditor()
@@ -2302,7 +2541,7 @@ namespace NetOptimizerV2
 
         private static CheckBox CheckBoxText(string text, bool value)
         {
-            return new CheckBox
+            CheckBox box = new CheckBox
             {
                 Text = text,
                 Checked = value,
@@ -2312,6 +2551,8 @@ namespace NetOptimizerV2
                 BackColor = PanelBackground,
                 Margin = new Padding(0, 0, 18, 4)
             };
+            Localization.Mark(box, text);
+            return box;
         }
 
         private static NumericUpDown NumberBox(int minimum, int maximum, int value)
@@ -2362,6 +2603,7 @@ namespace NetOptimizerV2
             };
             button.FlatAppearance.BorderColor = accent ? Color.FromArgb(39, 111, 91) : Color.FromArgb(59, 64, 71);
             button.SetBounds(x, y, width, height);
+            Localization.Mark(button, text);
             return button;
         }
 
@@ -2386,12 +2628,13 @@ namespace NetOptimizerV2
                 TextAlign = alignment
             };
             label.SetBounds(x, y, width, height);
+            Localization.Mark(label, text);
             return label;
         }
 
         private void OpenSupportDialog()
         {
-            using (SupportDialog dialog = new SupportDialog())
+            using (SupportDialog dialog = new SupportDialog(currentLanguage))
             {
                 dialog.ShowDialog(this);
             }
@@ -2410,11 +2653,11 @@ namespace NetOptimizerV2
             }
             catch (Win32Exception)
             {
-                AppendLog("使用者取消系統管理員重新啟動。", true);
+                AppendLog(L("使用者取消系統管理員重新啟動。"), true);
             }
             catch (Exception ex)
             {
-                AppendLog("無法以系統管理員重新啟動：" + ex.Message, true);
+                AppendLog(L("無法以系統管理員重新啟動：") + ex.Message, true);
             }
         }
 

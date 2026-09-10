@@ -44,6 +44,7 @@ namespace NetOptimizerV2
         public int SmartProbeIntervalMs { get; set; }
         public int SmartMaxSwitchesPerHour { get; set; }
         public double SmartEwmaAlpha { get; set; }
+        public AppLanguage Language { get; set; }
         public bool? BeginnerMode { get; set; }
 
         public static MonitorSettings CreateDefault()
@@ -88,6 +89,7 @@ namespace NetOptimizerV2
                 SmartProbeIntervalMs = 1000,
                 SmartMaxSwitchesPerHour = 6,
                 SmartEwmaAlpha = 0.15,
+                Language = AppLanguage.TraditionalChinese,
                 BeginnerMode = true
             };
         }
@@ -133,6 +135,7 @@ namespace NetOptimizerV2
                 SmartProbeIntervalMs = SmartProbeIntervalMs,
                 SmartMaxSwitchesPerHour = SmartMaxSwitchesPerHour,
                 SmartEwmaAlpha = SmartEwmaAlpha,
+                Language = Language,
                 BeginnerMode = BeginnerMode,
                 Targets = new List<string>()
             };
@@ -170,6 +173,7 @@ namespace NetOptimizerV2
             {
                 BeginnerMode = true;
             }
+            Language = Localization.Normalize(Language);
             if (Targets == null)
             {
                 Targets = new List<string>();

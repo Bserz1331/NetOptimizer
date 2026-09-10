@@ -17,10 +17,12 @@ namespace NetOptimizerV2
         private Button trc20CopyButton;
         private TextBox bep20AddressBox;
         private TextBox trc20AddressBox;
+        private readonly AppLanguage language;
 
-        public SupportDialog()
+        public SupportDialog(AppLanguage language = AppLanguage.TraditionalChinese)
         {
-            Text = "支持開發";
+            this.language = Localization.Normalize(language);
+            Text = L("支持開發");
             BackColor = Color.FromArgb(20, 21, 23);
             ForeColor = Color.FromArgb(238, 240, 242);
             Font = new Font("Microsoft JhengHei UI", 9F);
@@ -40,19 +42,19 @@ namespace NetOptimizerV2
                 ShowAlways = true
             };
 
-            Controls.Add(LabelOf("自願支持", 14, 12, 150, 20, 9F,
+            Controls.Add(LabelOf(L("自願支持"), 14, 12, 150, 20, 9F,
                                 Color.FromArgb(82, 201, 151), FontStyle.Bold));
-            Controls.Add(LabelOf("支持開發", 14, 34, 300, 34, 19F,
+            Controls.Add(LabelOf(L("支持開發"), 14, 34, 300, 34, 19F,
                                 ForeColor, FontStyle.Bold));
 
             Panel kofi = Card(Color.FromArgb(19, 39, 35), Color.FromArgb(39, 111, 91));
             kofi.SetBounds(14, 80, 612, 62);
             kofi.Controls.Add(LabelOf("☕", 16, 13, 34, 34, 17F, ForeColor));
-            kofi.Controls.Add(LabelOf("透過 Ko-fi 支持", 58, 8, 250, 24, 11F,
+            kofi.Controls.Add(LabelOf(L("透過 Ko-fi 支持"), 58, 8, 250, 24, 11F,
                                      ForeColor, FontStyle.Bold));
-            kofi.Controls.Add(LabelOf("支持後續維護與改善", 58, 33, 250, 18, 8.5F,
+            kofi.Controls.Add(LabelOf(L("支持後續維護與改善"), 58, 33, 250, 18, 8.5F,
                                      Color.FromArgb(155, 161, 168)));
-            kofiButton = ButtonOf("開啟 ↗", 520, 15, 80, 30, true);
+            kofiButton = ButtonOf(L("開啟 ↗"), 520, 15, 80, 30, true);
             kofiButton.Click += delegate { OpenUrl(KoFiUrl); };
             kofi.Controls.Add(kofiButton);
             Controls.Add(kofi);
@@ -66,7 +68,7 @@ namespace NetOptimizerV2
 
             Panel warning = Card(Color.FromArgb(42, 36, 20), Color.FromArgb(144, 103, 26));
             warning.SetBounds(14, 270, 612, 44);
-            warning.Controls.Add(LabelOf("轉帳前請確認網路：BEP20／TRC20。建議先小額測試。",
+            warning.Controls.Add(LabelOf(L("轉帳前請確認網路：BEP20／TRC20。建議先小額測試。"),
                                          12, 7, 585, 28, 8.5F,
                                          Color.FromArgb(238, 181, 43), FontStyle.Bold));
             Controls.Add(warning);
@@ -99,7 +101,7 @@ namespace NetOptimizerV2
             toolTip.SetToolTip(addressBox, address);
             card.Controls.Add(addressBox);
 
-            Button localCopyButton = ButtonOf("複製地址", 199, 52, 87, 28, false);
+            Button localCopyButton = ButtonOf(L("複製地址"), 199, 52, 87, 28, false);
             copyButton = localCopyButton;
             localCopyButton.Click += delegate { CopyAddress(address, localCopyButton); };
             card.Controls.Add(localCopyButton);
@@ -112,7 +114,7 @@ namespace NetOptimizerV2
             {
                 Clipboard.SetText(address);
                 string oldText = button.Text;
-                button.Text = "已複製 ✓";
+                button.Text = L("已複製 ✓");
                 Timer reset = new Timer { Interval = 1400 };
                 reset.Tick += delegate
                 {
@@ -124,8 +126,8 @@ namespace NetOptimizerV2
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "無法複製地址，請稍後再試。" + Environment.NewLine + ex.Message,
-                                "支持開發", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, L("無法複製地址，請稍後再試。") + Environment.NewLine + ex.Message,
+                                L("支持開發"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -183,7 +185,12 @@ namespace NetOptimizerV2
             return button;
         }
 
-        private static void OpenUrl(string url)
+        private string L(string source)
+        {
+            return Localization.Get(language, source);
+        }
+
+        private void OpenUrl(string url)
         {
             try
             {
@@ -191,9 +198,9 @@ namespace NetOptimizerV2
             }
             catch (Exception ex)
             {
-                MessageBox.Show("無法開啟瀏覽器。" + Environment.NewLine + url +
+                MessageBox.Show(L("無法開啟瀏覽器。") + Environment.NewLine + url +
                                 Environment.NewLine + ex.Message,
-                                "支持開發", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                L("支持開發"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -232,9 +239,29 @@ namespace NetOptimizerV2
                 }
                 dialog.Close();
             }
+            using (SupportDialog english = new SupportDialog(AppLanguage.English))
+            {
+                english.ShowInTaskbar = false;
+                english.Opacity = 0.0;
+                english.Show();
+                Application.DoEvents();
+                if (english.Text != "Support development" ||
+                    english.kofiButton.Text != "Open ↗" ||
+                    english.bep20CopyButton.Text != "Copy" ||
+                    english.trc20CopyButton.Text != "Copy")
+                {
+                    throw new InvalidOperationException("English support dialog localization failed.");
+                }
+                english.Close();
+            }
         }
 
         internal static void SaveUiSnapshot(string outputPath)
+        {
+            SaveUiSnapshot(outputPath, AppLanguage.TraditionalChinese);
+        }
+
+        internal static void SaveUiSnapshot(string outputPath, AppLanguage language)
         {
             if (string.IsNullOrWhiteSpace(outputPath))
             {
@@ -243,7 +270,7 @@ namespace NetOptimizerV2
             string fullPath = Path.GetFullPath(outputPath);
             string directory = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrWhiteSpace(directory)) { Directory.CreateDirectory(directory); }
-            using (SupportDialog dialog = new SupportDialog())
+            using (SupportDialog dialog = new SupportDialog(language))
             {
                 dialog.ShowInTaskbar = false;
                 dialog.StartPosition = FormStartPosition.Manual;

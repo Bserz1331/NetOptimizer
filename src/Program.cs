@@ -14,8 +14,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Space Cat")]
 [assembly: AssemblyProduct("NetOptimizer")]
 [assembly: AssemblyCopyright("Copyright © Space Cat")]
-[assembly: AssemblyVersion("3.0.11.0")]
-[assembly: AssemblyFileVersion("3.0.11.0")]
+[assembly: AssemblyVersion("3.0.12.0")]
+[assembly: AssemblyFileVersion("3.0.12.0")]
 
 namespace NetOptimizerV2
 {
@@ -133,11 +133,16 @@ namespace NetOptimizerV2
             string uiSnapshotPath = ParseArgumentValue(args, "--ui-snapshot=");
             if (!string.IsNullOrWhiteSpace(uiSnapshotPath))
             {
+                string snapshotLanguage = ParseArgumentValue(args, "--snapshot-language=");
+                AppLanguage language = string.Equals(snapshotLanguage, "en", StringComparison.OrdinalIgnoreCase) ||
+                                       string.Equals(snapshotLanguage, "english", StringComparison.OrdinalIgnoreCase)
+                    ? AppLanguage.English
+                    : AppLanguage.TraditionalChinese;
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 try
                 {
-                    MainForm.SaveUiSnapshot(uiSnapshotPath);
+                    MainForm.SaveUiSnapshot(uiSnapshotPath, language);
                     Environment.ExitCode = 0;
                 }
                 catch (Exception ex)
@@ -151,11 +156,16 @@ namespace NetOptimizerV2
             string supportSnapshotPath = ParseArgumentValue(args, "--support-snapshot=");
             if (!string.IsNullOrWhiteSpace(supportSnapshotPath))
             {
+                string snapshotLanguage = ParseArgumentValue(args, "--snapshot-language=");
+                AppLanguage language = string.Equals(snapshotLanguage, "en", StringComparison.OrdinalIgnoreCase) ||
+                                       string.Equals(snapshotLanguage, "english", StringComparison.OrdinalIgnoreCase)
+                    ? AppLanguage.English
+                    : AppLanguage.TraditionalChinese;
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 try
                 {
-                    SupportDialog.SaveUiSnapshot(supportSnapshotPath);
+                    SupportDialog.SaveUiSnapshot(supportSnapshotPath, language);
                     Environment.ExitCode = 0;
                 }
                 catch (Exception ex)
@@ -260,7 +270,8 @@ namespace NetOptimizerV2
                     settings.FailoverRecoverySeconds != 5 || settings.FailoverPrimaryMetric != 5 ||
                     settings.FailoverBackupMetric != 50 || settings.FailoverTargets.Count != 2 ||
                     settings.SmartSelectionEnabled || settings.SmartEwmaAlpha < 0.149 ||
-                    settings.SmartEwmaAlpha > 0.151)
+                    settings.SmartEwmaAlpha > 0.151 ||
+                    settings.Language != AppLanguage.TraditionalChinese)
                 {
                     throw new InvalidOperationException("預設設定驗證失敗。");
                 }

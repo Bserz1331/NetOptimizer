@@ -1,8 +1,10 @@
 # NetOptimizer
 
+English documentation: [README.en.md](README.en.md)
+
 Windows 網路監測、A/B 備援切換與慢速 EWMA 智慧選路工具。
 
-v3.0.11 強化網路自動偵測與 A/B 啟動安全：備援只會選擇 `IsReady` 線路、排除 `NotPresent` 下拉項目，沒有第二條就緒線路時會清空備援並提示；非管理員不會啟動 A/B。
+目前開發版本為 v3.0.12：新增繁體中文／English 介面切換，語言偏好會保存到設定檔；並延續 v3.0.11 的網路自動偵測與 A/B 啟動安全：備援只會選擇 `IsReady` 線路、排除 `NotPresent` 下拉項目，沒有第二條就緒線路時會清空備援並提示；非管理員不會啟動 A/B。
 
 ## 專案結構
 
@@ -12,6 +14,7 @@ v3.0.11 強化網路自動偵測與 A/B 啟動安全：備援只會選擇 `IsRea
 - `docs\`：錯誤診斷與操作補充。
 - `docs\OPEN-SOURCE-BOUNDARY.md`：公開核心與未來商業模組的發布邊界。
 - `archive\`：舊版與原始桌面副本，僅供本機回溯，不提交到 GitHub。
+- `README.en.md`：英文功能、建置與安全說明。
 
 GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.11 變更與驗證請看 [Release notes](docs/RELEASE-v3.0.11.md)。
 
@@ -20,13 +23,13 @@ GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.1
 在本目錄的 Windows PowerShell 執行：
 
 ```powershell
-.\build.ps1 -Version 3.0.11 -OutputDirectory .\dist
+.\build.ps1 -Version 3.0.12 -OutputDirectory .\dist
 ```
 
 簽章憑證可選；沒有憑證時會保持未簽章並明確顯示 skipped：
 
 ```powershell
-.\build.ps1 -Version 3.0.11 `
+  .\build.ps1 -Version 3.0.12 `
   -SigningCertificateThumbprint "憑證指紋" `
   -TimestampUrl "https://你的時間戳服務"
 ```
@@ -34,16 +37,20 @@ GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.1
 ## 測試
 
 ```powershell
-.\dist\NetOptimizer-v3.0.11.exe --self-test
-.\dist\NetOptimizer-v3.0.11.exe --failover-simulation
-.\dist\NetOptimizer-v3.0.11.exe --interface-probe-test
-.\dist\NetOptimizer-v3.0.11.exe --diagnostics-test
-.\dist\NetOptimizer-v3.0.11.exe --interface-metric-test
-.\dist\NetOptimizer-v3.0.11.exe --ui-layout-test
-.\dist\NetOptimizer-v3.0.11.exe --gui-startup-test
-.\dist\NetOptimizer-v3.0.11.exe --support-snapshot=.\build\support.png
-.\dist\NetOptimizer-v3.0.11.exe --soak-test --seconds=60
+.\dist\NetOptimizer-v3.0.12.exe --self-test
+.\dist\NetOptimizer-v3.0.12.exe --failover-simulation
+.\dist\NetOptimizer-v3.0.12.exe --interface-probe-test
+.\dist\NetOptimizer-v3.0.12.exe --diagnostics-test
+.\dist\NetOptimizer-v3.0.12.exe --interface-metric-test
+.\dist\NetOptimizer-v3.0.12.exe --ui-layout-test
+.\dist\NetOptimizer-v3.0.12.exe --gui-startup-test
+.\dist\NetOptimizer-v3.0.12.exe --support-snapshot=.\build\support.png
+.\dist\NetOptimizer-v3.0.12.exe --soak-test --seconds=60
 ```
+
+## 語言
+
+啟動程式後，使用右上角的語言下拉選單切換 `繁體中文` 或 `English`。切換會立即套用到主畫面、系統匣選單與支持開發視窗，並保存到 `%LOCALAPPDATA%\NetOptimizer\settings.xml`。網卡名稱、測試目標與診斷資料保持原始內容。
 
 `--interface-probe-test` 只做唯讀的來源 IPv4 TCP 探測，不會改動 metric、route、DNS 或 MTU。
 
