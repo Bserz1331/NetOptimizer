@@ -39,7 +39,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-            name: NetOptimizer-v3.0.12-windows
+          name: NetOptimizer-v3.0.12-windows
           path: |
             dist/NetOptimizer-v3.0.12.exe
             dist/NetOptimizer-v3.0.12.pdb
