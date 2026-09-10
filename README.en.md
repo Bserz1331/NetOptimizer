@@ -1,8 +1,23 @@
 # NetOptimizer
 
-NetOptimizer is a Windows network monitor with A/B failover and slow EWMA-based smart routing. It combines the practical refresh behavior of the original NetOptimizer with the dual-link failover logic from DoubleNet, while keeping timeouts, rollback, and long-running stability explicit.
+[Traditional Chinese documentation](README.md)
 
-The `main` branch currently contains the v3.0.12 development changes, including a switchable Traditional Chinese / English interface. The existing [v3.0.11 release](https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.11) remains available while the new build is being verified.
+NetOptimizer is a portable Windows x64 network monitor with A/B failover and optional slow EWMA-based smart routing. It combines practical network refresh actions with dual-link failover, explicit timeouts, rollback checks, and long-running stability safeguards.
+
+## Download
+
+Download the latest stable build from [NetOptimizer v3.0.12](https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.12).
+
+For most users, download `NetOptimizer-v3.0.12-win-x64.zip`, extract it, and run `NetOptimizer-v3.0.12.exe`. No installer is required. The standalone EXE and SHA256 checksum file are also available in the release assets.
+
+## Quick start
+
+1. Start the program.
+2. Choose `繁體中文` or `English` from the language selector in the upper-right corner.
+3. Select the primary network. If a second ready network is available, select it as the backup.
+4. Click `Start protection`.
+
+Use `Beginner mode` for the common workflow. Advanced monitoring, A/B, EWMA, and diagnostic settings remain available when needed.
 
 ## Features
 
@@ -11,7 +26,7 @@ The `main` branch currently contains the v3.0.12 development changes, including 
 - A/B failover that changes IPv4 interface metrics only after the backup passes health checks.
 - Recovery journal and rollback verification after a crash or interrupted metric change.
 - Automatic return to A after the primary link remains stable for the configured recovery period.
-- Slow EWMA smart routing as an optional policy; it does not replace failure failover.
+- Optional slow EWMA smart routing that compares latency, loss, and jitter; it does not replace failure failover.
 - Safe interface discovery: automatic selection uses only interfaces with IPv4 and a default gateway (`IsReady`); `NotPresent` interfaces are excluded from the lists.
 - Non-administrator A/B startup is blocked with an explicit “Restart as administrator” action.
 - Beginner mode for the common workflow and an advanced mode for monitoring, failover, EWMA, and diagnostics settings.
@@ -22,11 +37,7 @@ The `main` branch currently contains the v3.0.12 development changes, including 
 
 The primary interface A is monitored against the configured TCP targets. When A reaches the consecutive-failure threshold, the program checks that B is present, has IPv4 and a gateway, and passes the failover health policy before changing interface metrics. If no second ready interface exists, B remains empty and no route change is attempted.
 
-When both links are healthy, optional EWMA smart routing slowly compares latency, loss, and jitter:
-
-`score = EWMA latency + EWMA loss × timeout + EWMA jitter`
-
-The policy requires a configurable margin, hold time, minimum dwell time, backoff, and hourly switch budget. Keep it disabled when stability is more important than choosing between two already-healthy links.
+When both links are healthy, optional EWMA smart routing slowly compares latency, loss, and jitter. The policy uses a configurable margin, hold time, minimum dwell time, backoff, and hourly switch budget. It is disabled by default; keep it disabled when stability is more important than choosing between two already-healthy links.
 
 ## Permissions and safety
 
@@ -46,25 +57,30 @@ The build uses the .NET Framework compiler and Windows SDK resources available o
 
 ## Tests
 
+Maintainers can run the deterministic checks below from the repository root:
+
+<details>
+<summary>Show validation commands</summary>
+
 ```powershell
 .\dist\NetOptimizer-v3.0.12.exe --self-test
 .\dist\NetOptimizer-v3.0.12.exe --failover-simulation
 .\dist\NetOptimizer-v3.0.12.exe --interface-probe-test
 .\dist\NetOptimizer-v3.0.12.exe --diagnostics-test
-.\dist\NetOptimizer-v3.0.12.exe --interface-metric-test
 .\dist\NetOptimizer-v3.0.12.exe --ui-layout-test
 .\dist\NetOptimizer-v3.0.12.exe --gui-startup-test
-.\dist\NetOptimizer-v3.0.12.exe --support-snapshot=.\build\support.png
 .\dist\NetOptimizer-v3.0.12.exe --soak-test --seconds=60
 ```
 
-`--interface-probe-test` is read-only: it probes using each available interface's source IPv4 and does not change routes, metrics, DNS, or MTU. Real A/B route switching should be tested as an administrator in an environment where a brief connection transition is acceptable.
+`--interface-probe-test` is read-only: it probes using each available interface's source IPv4 and does not change routes, metrics, DNS, or MTU. The metric test, when used, must run as administrator and is expected to be refused in a standard-user shell. Real A/B route switching should be tested as an administrator in an environment where a brief connection transition is acceptable.
 
-## Repository layout
+</details>
 
-- `src\` contains the C# source, icon assets, and the source build script.
-- `docs\` contains diagnostic, release, and open-source boundary notes.
-- `build\`, `dist\`, and `archive\` are local build/recovery directories and are not part of the public source tree.
+## More documentation
+
+- [InterfaceMetric permission troubleshooting](docs/INTERFACEMETRIC-ERROR.md)
+- [Open-source boundary](docs/OPEN-SOURCE-BOUNDARY.md)
+- [Release preparation notes](docs/GITHUB-PUBLISH.md)
 
 ## Support
 
