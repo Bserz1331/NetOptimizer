@@ -1291,7 +1291,7 @@ namespace NetOptimizerV2
                     form.updateLink.PointToScreen(Point.Empty), form.updateLink.ClientSize);
                 Rectangle updateHeaderBounds = new Rectangle(
                     form.headerLayout.PointToScreen(Point.Empty), form.headerLayout.ClientSize);
-                if (!form.updateLink.Visible || form.updateLink.Text != "更新 v3.0.16" ||
+                if (!form.updateLink.Visible || form.updateLink.Text != form.L("更新 v3.0.16") ||
                     form.trayUpdate.Owner != form.trayMenu ||
                     form.trayIgnoreUpdate.Owner != form.trayMenu || !form.trayUpdate.Enabled ||
                     !form.trayIgnoreUpdate.Enabled ||
