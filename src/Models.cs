@@ -50,6 +50,11 @@ namespace NetOptimizerV2
 
         public static MonitorSettings CreateDefault()
         {
+            return CreateDefault(AppLanguage.TraditionalChinese);
+        }
+
+        public static MonitorSettings CreateDefault(AppLanguage language)
+        {
             return new MonitorSettings
             {
                 InterfaceName = "Wi-Fi",
@@ -90,7 +95,7 @@ namespace NetOptimizerV2
                 SmartProbeIntervalMs = 1000,
                 SmartMaxSwitchesPerHour = 6,
                 SmartEwmaAlpha = 0.15,
-                Language = AppLanguage.TraditionalChinese,
+                Language = Localization.Normalize(language),
                 BeginnerMode = true,
                 StartWithWindows = false
             };

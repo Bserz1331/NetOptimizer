@@ -16,18 +16,18 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: .\build.ps1 -Version 3.0.14 -OutputDirectory .\dist
+        run: .\build.ps1 -Version 3.0.15 -OutputDirectory .\dist
 
       - name: Run deterministic tests
         shell: pwsh
         run: |
-          $exe = (Resolve-Path .\dist\NetOptimizer-v3.0.14.exe).Path
+          $exe = (Resolve-Path .\dist\NetOptimizer-v3.0.15.exe).Path
           $tests = @(
             '--self-test',
             '--failover-simulation',
             '--diagnostics-test',
             '--ui-layout-test',
-            '--gui-startup-test'
+            '--gui-startup-test',
             '--update-check-test'
           )
           foreach ($test in $tests) {
@@ -40,7 +40,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: NetOptimizer-v3.0.14-windows
+          name: NetOptimizer-v3.0.15-windows
           path: |
-            dist/NetOptimizer-v3.0.14.exe
-            dist/NetOptimizer-v3.0.14.pdb
+            dist/NetOptimizer-v3.0.15.exe
+            dist/NetOptimizer-v3.0.15.pdb

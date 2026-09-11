@@ -1,6 +1,6 @@
 1 VERSIONINFO
-FILEVERSION 3,0,14,0
-PRODUCTVERSION 3,0,14,0
+FILEVERSION 3,0,15,0
+PRODUCTVERSION 3,0,15,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS 0x40004L
@@ -13,11 +13,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Space Cat\0"
       VALUE "FileDescription", "NetOptimizer\0"
-      VALUE "FileVersion", "3.0.14.0\0"
+      VALUE "FileVersion", "3.0.15.0\0"
       VALUE "InternalName", "NetOptimizer\0"
       VALUE "OriginalFilename", "NetOptimizer.exe\0"
       VALUE "ProductName", "NetOptimizer\0"
-      VALUE "ProductVersion", "3.0.14.0\0"
+      VALUE "ProductVersion", "3.0.15.0\0"
     END
   END
   BLOCK "VarFileInfo"

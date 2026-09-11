@@ -14,8 +14,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Space Cat")]
 [assembly: AssemblyProduct("NetOptimizer")]
 [assembly: AssemblyCopyright("Copyright © Space Cat")]
-[assembly: AssemblyVersion("3.0.14.0")]
-[assembly: AssemblyFileVersion("3.0.14.0")]
+[assembly: AssemblyVersion("3.0.15.0")]
+[assembly: AssemblyFileVersion("3.0.15.0")]
 
 namespace NetOptimizerV2
 {
@@ -407,6 +407,7 @@ namespace NetOptimizerV2
                 }
 
                 UpdateChecker.RunSelfTest();
+                Localization.RunSelfTest();
 
                 if (!StartupManager.IsProtectedInstallPath(
                         @"C:\Program Files\NetOptimizer\NetOptimizer.exe") ||

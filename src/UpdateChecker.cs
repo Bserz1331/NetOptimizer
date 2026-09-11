@@ -332,16 +332,16 @@ namespace NetOptimizerV2
         internal static void RunSelfTest()
         {
             const string json =
-                "{\"tag_name\":\"v3.0.15\",\"html_url\":\"https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.15\",\"draft\":false,\"prerelease\":false}";
-            UpdateCheckResult update = ParseReleaseJson(json, new Version(3, 0, 14, 0));
+                "{\"tag_name\":\"v3.0.16\",\"html_url\":\"https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.16\",\"draft\":false,\"prerelease\":false}";
+            UpdateCheckResult update = ParseReleaseJson(json, new Version(3, 0, 15, 0));
             if (!update.Succeeded || !update.IsUpdateAvailable || update.Update == null ||
-                update.Update.DisplayVersion != "v3.0.15" ||
+                update.Update.DisplayVersion != "v3.0.16" ||
                 update.Update.ReleaseUrl.IndexOf("github.com/Bserz1331/NetOptimizer", StringComparison.OrdinalIgnoreCase) < 0)
             {
                 throw new InvalidOperationException("更新檢查器未正確辨識新版本。");
             }
 
-            UpdateCheckResult current = ParseReleaseJson(json, new Version(3, 0, 15));
+            UpdateCheckResult current = ParseReleaseJson(json, new Version(3, 0, 16));
             if (!current.Succeeded || current.IsUpdateAvailable)
             {
                 throw new InvalidOperationException("更新檢查器錯誤地提示目前版本更新。");

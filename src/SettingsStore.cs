@@ -30,7 +30,7 @@ namespace NetOptimizerV2
             {
                 if (!File.Exists(SettingsPath))
                 {
-                    return MonitorSettings.CreateDefault();
+                    return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
                 }
 
                 using (FileStream stream = new FileStream(
@@ -40,7 +40,7 @@ namespace NetOptimizerV2
                     if (settings == null)
                     {
                         warning = "設定檔是空的，已改用預設值。";
-                        return MonitorSettings.CreateDefault();
+                        return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
                     }
                     settings.Normalize();
                     return settings;
@@ -49,7 +49,7 @@ namespace NetOptimizerV2
             catch (Exception ex)
             {
                 warning = "讀取設定檔失敗，已改用預設值：" + ex.Message;
-                return MonitorSettings.CreateDefault();
+                return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
             }
         }
 

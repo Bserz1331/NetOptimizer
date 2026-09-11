@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Windows.Forms;
 
 namespace NetOptimizerV2
@@ -207,6 +208,7 @@ namespace NetOptimizerV2
                 { "」。", "”." },
                 { "自動偵測網路失敗：", "Automatic network detection failed: " },
                 { "自動偵測：沒有找到具 IPv4 與 gateway 的就緒網路。", "Automatic detection found no ready network with IPv4 and a gateway." },
+                { "沒有偵測到就緒備援，自動切換已關閉。", "No ready backup was detected; automatic failover was disabled." },
                 { "無法完成網路偵測。", "Unable to finish network detection." },
                 { "請先停止自動保護，再執行復原。", "Stop protection before restoring the previous change." },
                 { "目前沒有待復原的 A/B 網路變更。", "There is no pending A/B network change to restore." },
@@ -232,6 +234,48 @@ namespace NetOptimizerV2
                 { "就緒：", "Ready: " },
                 { "以系統管理員身分重試", "Retry as admin" }
             };
+
+        public static AppLanguage DetectWindowsDefault()
+        {
+            if (IsChineseCulture(CultureInfo.CurrentUICulture) ||
+                IsChineseCulture(CultureInfo.CurrentCulture))
+            {
+                return AppLanguage.TraditionalChinese;
+            }
+
+            return AppLanguage.English;
+        }
+
+        internal static AppLanguage DetectDefaultForCultureName(string cultureName)
+        {
+            return !string.IsNullOrWhiteSpace(cultureName) &&
+                   cultureName.Trim().StartsWith("zh", StringComparison.OrdinalIgnoreCase)
+                ? AppLanguage.TraditionalChinese
+                : AppLanguage.English;
+        }
+
+        internal static void RunSelfTest()
+        {
+            if (DetectDefaultForCultureName("zh-TW") != AppLanguage.TraditionalChinese ||
+                DetectDefaultForCultureName("zh-CN") != AppLanguage.TraditionalChinese ||
+                DetectDefaultForCultureName("zh-HK") != AppLanguage.TraditionalChinese ||
+                DetectDefaultForCultureName("en-US") != AppLanguage.English ||
+                DetectDefaultForCultureName("ja-JP") != AppLanguage.English ||
+                DetectDefaultForCultureName(string.Empty) != AppLanguage.English)
+            {
+                throw new InvalidOperationException("Windows 語系預設判斷驗證失敗。");
+            }
+
+            Console.WriteLine(
+                "NetOptimizer language default test: PASS (" +
+                CultureInfo.CurrentUICulture.Name + " -> " + DetectWindowsDefault() + ")");
+        }
+
+        private static bool IsChineseCulture(CultureInfo culture)
+        {
+            return culture != null &&
+                   DetectDefaultForCultureName(culture.Name) == AppLanguage.TraditionalChinese;
+        }
 
         public static AppLanguage Normalize(AppLanguage language)
         {

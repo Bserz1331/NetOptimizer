@@ -837,7 +837,9 @@ namespace NetOptimizerV2
                 }
                 catch
                 {
-                    next = settings == null ? MonitorSettings.CreateDefault() : settings.Clone();
+                    next = settings == null
+                        ? MonitorSettings.CreateDefault(Localization.DetectWindowsDefault())
+                        : settings.Clone();
                 }
                 next.Language = currentLanguage;
                 next.Normalize();
@@ -1056,6 +1058,7 @@ namespace NetOptimizerV2
 
                 if (selection.Primary == null)
                 {
+                    DisableFailoverWithoutReadyBackup();
                     PopulateInterfaceBox(beginnerPrimaryInterfaceBox, readyNames, string.Empty);
                     PopulateInterfaceBox(beginnerBackupInterfaceBox, readyNames, string.Empty);
                     beginnerPrimaryInterfaceBox.Text = string.Empty;
@@ -1065,6 +1068,7 @@ namespace NetOptimizerV2
                     UpdateBeginnerStatus();
                     string noReadyMessage =
                         L("自動偵測未找到任何就緒網路；主要與備援已留空。") + Environment.NewLine +
+                        L("沒有偵測到就緒備援，自動切換已關閉。") + Environment.NewLine +
                         L("請先連線 Wi‑Fi 或藍牙網路，再按「重新偵測網路」。");
                     AppendLog(L("自動偵測：沒有找到具 IPv4 與 gateway 的就緒網路。"), true);
                     if (showPrompt)
@@ -1080,6 +1084,10 @@ namespace NetOptimizerV2
                                      selection.Backup == null ? string.Empty : selection.Backup.Name);
                 beginnerPrimaryInterfaceBox.Text = selection.Primary.Name;
                 beginnerBackupInterfaceBox.Text = selection.Backup == null ? string.Empty : selection.Backup.Name;
+                if (!HasReadyBackup(selection.Backup))
+                {
+                    DisableFailoverWithoutReadyBackup();
+                }
                 if (interfaceBox != null) { interfaceBox.Text = selection.Primary.Name; }
                 if (beginnerMode)
                 {
@@ -1092,7 +1100,9 @@ namespace NetOptimizerV2
                     string oneReadyMessage =
                         L("已找到主要網路「") + selection.Primary.Name + L("」，但沒有第二條就緒線路。") +
                         Environment.NewLine +
-                        L("備援已留空；請再連線另一條具 IPv4 與 gateway 的網路。");
+                        L("備援已留空；請再連線另一條具 IPv4 與 gateway 的網路。") +
+                        Environment.NewLine +
+                        L("沒有偵測到就緒備援，自動切換已關閉。");
                     AppendLog(L("已重新偵測網路：主要「") + selection.Primary.Name +
                               L("」；備援未找到，已留空。"), true);
                     if (showPrompt)
@@ -1109,6 +1119,7 @@ namespace NetOptimizerV2
             }
             catch (Exception ex)
             {
+                DisableFailoverWithoutReadyBackup();
                 AppendLog(L("自動偵測網路失敗：") + ex.Message, true);
                 if (showPrompt)
                 {
@@ -1159,6 +1170,25 @@ namespace NetOptimizerV2
                 Primary = primary,
                 Backup = backup
             };
+        }
+
+        internal static bool HasReadyBackup(InterfaceSnapshot backup)
+        {
+            return backup != null && backup.IsReady;
+        }
+
+        private void DisableFailoverWithoutReadyBackup()
+        {
+            if (settings != null)
+            {
+                settings.FailoverEnabled = false;
+                settings.SmartSelectionEnabled = false;
+            }
+            if (beginnerFailoverBox != null) { beginnerFailoverBox.Checked = false; }
+            if (failoverEnabledBox != null) { failoverEnabledBox.Checked = false; }
+            if (smartSelectionBox != null) { smartSelectionBox.Checked = false; }
+            UpdateFailoverEnabled();
+            UpdateBeginnerStatus();
         }
 
         private async void BeginnerRestoreButton_Click(object sender, EventArgs e)
@@ -1252,16 +1282,16 @@ namespace NetOptimizerV2
                     throw new InvalidOperationException("品牌圖示未載入。");
                 }
                 form.availableUpdate = new UpdateInfo(
-                    new Version(3, 0, 15, 0),
-                    "v3.0.15",
-                    UpdateChecker.RepositoryReleaseUrl + "/tag/v3.0.15");
+                    new Version(3, 0, 16, 0),
+                    "v3.0.16",
+                    UpdateChecker.RepositoryReleaseUrl + "/tag/v3.0.16");
                 form.UpdateUpdateUi();
                 form.PerformLayout();
                 Rectangle updateBounds = new Rectangle(
                     form.updateLink.PointToScreen(Point.Empty), form.updateLink.ClientSize);
                 Rectangle updateHeaderBounds = new Rectangle(
                     form.headerLayout.PointToScreen(Point.Empty), form.headerLayout.ClientSize);
-                if (!form.updateLink.Visible || form.updateLink.Text != "更新 v3.0.15" ||
+                if (!form.updateLink.Visible || form.updateLink.Text != "更新 v3.0.16" ||
                     form.trayUpdate.Owner != form.trayMenu ||
                     form.trayIgnoreUpdate.Owner != form.trayMenu || !form.trayUpdate.Enabled ||
                     !form.trayIgnoreUpdate.Enabled ||
@@ -1361,6 +1391,18 @@ namespace NetOptimizerV2
                             throw new InvalidOperationException("自動偵測選出的備援不是第二條 IsReady 網路。");
                         }
                     }
+                }
+
+                form.settings = form.settings.Clone();
+                form.settings.BeginnerMode = true;
+                form.settings.BackupInterface = string.Empty;
+                form.settings.FailoverEnabled = true;
+                form.settings.SmartSelectionEnabled = true;
+                form.ApplySettingsToUi();
+                if (form.beginnerFailoverBox.Checked || form.failoverEnabledBox.Checked ||
+                    form.smartSelectionBox.Checked)
+                {
+                    throw new InvalidOperationException("沒有就緒備援時，自動切換預設未關閉。");
                 }
 
                 if (!NetworkInfo.IsAdministrator())
@@ -1652,6 +1694,11 @@ namespace NetOptimizerV2
             {
                 throw new InvalidOperationException("自動偵測選路測試未選出第二條 IsReady 備援。");
             }
+
+            if (HasReadyBackup(null) || HasReadyBackup(notPresent) || !HasReadyBackup(readyB))
+            {
+                throw new InvalidOperationException("沒有就緒備援時，A/B 自動切換預設未關閉。");
+            }
         }
 
         private static void AssertBeginnerDashboard(MainForm form, string stage)
@@ -1910,6 +1957,15 @@ namespace NetOptimizerV2
         private void ApplySettingsToUi()
         {
             beginnerMode = !settings.BeginnerMode.HasValue || settings.BeginnerMode.Value;
+            InterfaceSnapshot backupSnapshot = NetworkInfo.GetInterfaceSnapshot(settings.BackupInterface);
+            bool backupReady = backupSnapshot != null && backupSnapshot.IsReady;
+            bool failoverWasDisabled = settings.FailoverEnabled && !backupReady;
+            bool failoverEnabled = settings.FailoverEnabled && backupReady;
+            if (failoverWasDisabled)
+            {
+                settings.FailoverEnabled = false;
+                settings.SmartSelectionEnabled = false;
+            }
             bool startupEnabled = StartupManager.IsEnabled(Application.ExecutablePath);
             applyingStartupPreference = true;
             try
@@ -1947,18 +2003,22 @@ namespace NetOptimizerV2
             smartSwitchHoldBox.Value = settings.SmartSwitchHoldSeconds;
             smartMarginBox.Value = settings.SmartMarginMs;
             enableRefreshBox.Checked = settings.EnableRefresh;
-            failoverEnabledBox.Checked = settings.FailoverEnabled;
-            smartSelectionBox.Checked = settings.SmartSelectionEnabled;
+            failoverEnabledBox.Checked = failoverEnabled;
+            smartSelectionBox.Checked = settings.SmartSelectionEnabled && failoverEnabled;
             suppressRefreshBox.Checked = settings.SuppressRefreshDuringFailover;
             dnsBox.Checked = settings.FlushDns;
             arpBox.Checked = settings.ClearArp;
             mtuBox.Checked = settings.PulseMtu;
-            beginnerFailoverBox.Checked = settings.FailoverEnabled;
+            beginnerFailoverBox.Checked = failoverEnabled;
             beginnerAutoRepairBox.Checked = settings.EnableRefresh;
             UpdateActionEnabled();
             UpdateFailoverEnabled();
             UpdateBeginnerStatus();
             UpdateUiMode();
+            if (failoverWasDisabled)
+            {
+                AppendLog(L("沒有偵測到就緒備援，自動切換已關閉。"), true);
+            }
         }
 
         private void SyncBeginnerSettingsToAdvanced()
