@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "3.0.12",
+    [string]$Version = "3.0.13",
     [string]$OutputDirectory = "",
     [string]$SigningCertificateThumbprint = "",
     [string]$TimestampUrl = ""
@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$buildDirectory = Join-Path (Split-Path -Parent $root) "build"
+$buildDirectory = Join-Path (Split-Path -Parent $root) "build\compiler-output"
 New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $root "build"

@@ -46,6 +46,7 @@ namespace NetOptimizerV2
         public double SmartEwmaAlpha { get; set; }
         public AppLanguage Language { get; set; }
         public bool? BeginnerMode { get; set; }
+        public bool StartWithWindows { get; set; }
 
         public static MonitorSettings CreateDefault()
         {
@@ -90,7 +91,8 @@ namespace NetOptimizerV2
                 SmartMaxSwitchesPerHour = 6,
                 SmartEwmaAlpha = 0.15,
                 Language = AppLanguage.TraditionalChinese,
-                BeginnerMode = true
+                BeginnerMode = true,
+                StartWithWindows = false
             };
         }
 
@@ -137,6 +139,7 @@ namespace NetOptimizerV2
                 SmartEwmaAlpha = SmartEwmaAlpha,
                 Language = Language,
                 BeginnerMode = BeginnerMode,
+                StartWithWindows = StartWithWindows,
                 Targets = new List<string>()
             };
 

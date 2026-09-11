@@ -6,8 +6,8 @@
 
 1. 建立 repository，建議名稱為 `NetOptimizer`。
 2. 推送原始碼與文件到 `main`。
-3. 建立 tag `v3.0.12`。
-4. 將 `dist\NetOptimizer-v3.0.12-win-x64.zip` 與 `dist\SHA256SUMS-v3.0.12.txt` 附加到 GitHub Release；需要時再附上 EXE、PDB 與 source ZIP。
+3. 建立 tag `v3.0.13`。
+4. 將 `dist\NetOptimizer-v3.0.13-win-x64.zip` 與 `dist\SHA256SUMS-v3.0.13.txt` 附加到 GitHub Release；需要時再附上 EXE、PDB 與 source ZIP。
 5. 確認 GitHub Actions 的 Windows build 通過後，再公開 Release。
 
 ## 目前發布決定

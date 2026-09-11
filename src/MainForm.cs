@@ -23,6 +23,8 @@ namespace NetOptimizerV2
 
         private readonly MonitorEngine engine = new MonitorEngine();
         private readonly Queue<string> visibleLog = new Queue<string>();
+        private readonly bool startMinimized;
+        private readonly bool autoStartMonitoring;
         private MonitorSettings settings;
         private bool closing;
 
@@ -83,6 +85,7 @@ namespace NetOptimizerV2
         private Button beginnerStartButton;
         private Button beginnerDetectButton;
         private Button beginnerRestoreButton;
+        private CheckBox startWithWindowsBox;
         private Button failoverAdvancedButton;
         private Panel failoverAdvancedPanel;
         private GroupBox beginnerPanel;
@@ -107,6 +110,7 @@ namespace NetOptimizerV2
         private ToolStripMenuItem trayStart;
         private ToolStripMenuItem trayStop;
         private ToolStripMenuItem trayAdmin;
+        private ToolStripMenuItem trayStartup;
         private FailoverStatus latestFailoverStatus;
         private bool exportingDiagnostics;
         private bool followLog = true;
@@ -116,6 +120,8 @@ namespace NetOptimizerV2
         private bool restoringNetwork;
         private AppLanguage currentLanguage;
         private bool applyingLanguage;
+        private bool applyingStartupPreference;
+        private bool startupConfigurationInProgress;
         private string lastProbeSummary = string.Empty;
         private bool hasProbeResult;
         private string lastProbeTarget = string.Empty;
@@ -138,8 +144,19 @@ namespace NetOptimizerV2
             public InterfaceSnapshot Backup;
         }
 
-        public MainForm()
+        public MainForm() : this(false, false)
         {
+        }
+
+        public MainForm(bool startMinimized)
+            : this(startMinimized, false)
+        {
+        }
+
+        public MainForm(bool startMinimized, bool autoStartMonitoring)
+        {
+            this.startMinimized = startMinimized;
+            this.autoStartMonitoring = autoStartMonitoring;
             string warning;
             settings = SettingsStore.Load(out warning);
             currentLanguage = Localization.Normalize(settings.Language);
@@ -176,6 +193,10 @@ namespace NetOptimizerV2
             }
             UpdatePermissionText();
             UpdateButtons();
+            if (startMinimized || autoStartMonitoring)
+            {
+                Shown += MainForm_StartupShown;
+            }
         }
 
         private void BuildUi()
@@ -518,6 +539,10 @@ namespace NetOptimizerV2
                 Padding = new Padding(0),
                 BackColor = Background
             };
+            startWithWindowsBox = CheckBoxText("開機自動啟動", false);
+            startWithWindowsBox.Margin = new Padding(0, 0, 10, 4);
+            startWithWindowsBox.CheckedChanged += StartWithWindowsBox_CheckedChanged;
+            permissionActions.Controls.Add(startWithWindowsBox);
             supportButton = ButtonOf("☕ 支持開發", 0, 0, 128, 28, true);
             supportButton.Dock = DockStyle.None;
             supportButton.Margin = new Padding(8, 0, 0, 0);
@@ -532,6 +557,7 @@ namespace NetOptimizerV2
             mainLayout.Controls.Add(permissionPanel, 0, 5);
             uiToolTip.SetToolTip(adminButton, "重新啟動並要求系統管理員權限；不會自動提權。");
             uiToolTip.SetToolTip(supportButton, "開啟支持開發選項：Ko-fi 與加密貨幣地址。");
+            uiToolTip.SetToolTip(startWithWindowsBox, "登入 Windows 後啟動並縮到系統匣。");
 
             logGroup = AutoGroupOf("執行紀錄");
             logGroup.AutoSize = false;
@@ -628,6 +654,13 @@ namespace NetOptimizerV2
             Localization.Mark(trayRefreshItem, "立即刷新");
             trayMenu.Items.Add(trayRefreshItem);
             trayMenu.Items.Add(new ToolStripSeparator());
+            trayStartup = new ToolStripMenuItem("開機自動啟動")
+            {
+                CheckOnClick = true
+            };
+            Localization.Mark(trayStartup, "開機自動啟動");
+            trayStartup.Click += delegate { ApplyStartupPreference(trayStartup.Checked); };
+            trayMenu.Items.Add(trayStartup);
             trayAdmin = new ToolStripMenuItem("以系統管理員重新啟動", null, delegate { RestartAsAdministrator(); });
             Localization.Mark(trayAdmin, "以系統管理員重新啟動");
             trayMenu.Items.Add(trayAdmin);
@@ -763,6 +796,10 @@ namespace NetOptimizerV2
                 ? L("最近一次 TCP 探測結果。")
                 : L("完整結果：") + lastProbeSummary);
             uiToolTip.SetToolTip(languageBox, L("選擇介面語言。"));
+            string startupTooltip = StartupManager.IsProtectedInstallPath(Application.ExecutablePath)
+                ? L("安裝版登入後會以系統管理員啟動並自動開始監測。")
+                : L("可攜版登入後啟動程式並縮到系統匣。");
+            uiToolTip.SetToolTip(startWithWindowsBox, startupTooltip);
             uiToolTip.SetToolTip(targetsBox, L("可輸入 IP 或網域，使用逗號分隔。"));
             uiToolTip.SetToolTip(enableRefreshBox, L("連續異常時執行已勾選的刷新動作。"));
             uiToolTip.SetToolTip(dnsBox, L("清除 DNS 快取。"));
@@ -1122,6 +1159,10 @@ namespace NetOptimizerV2
                 form.Opacity = 0.0;
                 form.Show();
                 Application.DoEvents();
+                form.beginnerMode = true;
+                form.UpdateBeginnerStatus();
+                form.UpdateUiMode();
+                form.UpdateButtons();
                 form.PerformLayout();
 
                 if (form.layoutRoot == null || form.layoutRoot.Controls.Count != 7 ||
@@ -1133,6 +1174,8 @@ namespace NetOptimizerV2
                      form.beginnerStartButton == null || !form.beginnerStartButton.Visible ||
                     form.beginnerDetectButton == null || !form.beginnerDetectButton.Visible ||
                     form.beginnerRestoreButton == null || !form.beginnerRestoreButton.Visible ||
+                    form.startWithWindowsBox == null || !form.startWithWindowsBox.Visible ||
+                    form.trayStartup == null ||
                     form.monitorGroup.Visible || form.actionsGroup.Visible ||
                     form.failoverGroup.Visible || form.logGroup.Visible)
                 {
@@ -1151,7 +1194,9 @@ namespace NetOptimizerV2
                                       form.languageBox.SelectedIndex == 1 &&
                                       form.beginnerPanel.Text == "Quick start" &&
                                       form.beginnerStartButton.Text == "Start protection" &&
-                                      form.supportButton.Text == "☕ Support";
+                                      form.supportButton.Text == "☕ Support" &&
+                                      form.startWithWindowsBox.Text == "Start with Windows" &&
+                                      form.trayStartup.Text == "Start with Windows";
                 form.currentLanguage = savedLanguage;
                 form.ApplyLanguageToUi(false);
                 if (!englishUiReady)
@@ -1307,6 +1352,44 @@ namespace NetOptimizerV2
 
         internal static void RunGuiStartupSelfTest()
         {
+            string hiddenFailure = null;
+            using (MainForm hiddenForm = new MainForm(true, false))
+            using (System.Windows.Forms.Timer hiddenTimer = new System.Windows.Forms.Timer())
+            {
+                hiddenForm.Opacity = 0.0;
+                hiddenTimer.Interval = 1000;
+                hiddenTimer.Tick += delegate
+                {
+                    try
+                    {
+                        if (hiddenForm.Visible || hiddenForm.WindowState != FormWindowState.Minimized ||
+                            hiddenForm.ShowInTaskbar)
+                        {
+                            throw new InvalidOperationException(
+                                "startup-hidden state invalid: visible=" + hiddenForm.Visible +
+                                ", windowState=" + hiddenForm.WindowState +
+                                ", showInTaskbar=" + hiddenForm.ShowInTaskbar);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        hiddenFailure = ex.Message;
+                    }
+                    finally
+                    {
+                        hiddenTimer.Stop();
+                        hiddenForm.Close();
+                    }
+                };
+                hiddenTimer.Start();
+                Application.Run(hiddenForm);
+            }
+
+            if (!string.IsNullOrWhiteSpace(hiddenFailure))
+            {
+                throw new InvalidOperationException(hiddenFailure);
+            }
+
             string failure = null;
             using (MainForm form = new MainForm())
             using (System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer())
@@ -1736,6 +1819,18 @@ namespace NetOptimizerV2
         private void ApplySettingsToUi()
         {
             beginnerMode = !settings.BeginnerMode.HasValue || settings.BeginnerMode.Value;
+            bool startupEnabled = StartupManager.IsEnabled(Application.ExecutablePath);
+            applyingStartupPreference = true;
+            try
+            {
+                startWithWindowsBox.Checked = startupEnabled;
+                trayStartup.Checked = startupEnabled;
+            }
+            finally
+            {
+                applyingStartupPreference = false;
+            }
+            settings.StartWithWindows = startupEnabled;
             interfaceBox.Text = settings.InterfaceName;
             primaryInterfaceBox.Text = settings.PrimaryInterface;
             backupInterfaceBox.Text = settings.BackupInterface;
@@ -1799,6 +1894,7 @@ namespace NetOptimizerV2
             SyncBeginnerSettingsToAdvanced();
             MonitorSettings next = settings.Clone();
             next.BeginnerMode = beginnerMode;
+            next.StartWithWindows = startWithWindowsBox != null && startWithWindowsBox.Checked;
             next.InterfaceName = interfaceBox.Text.Trim();
             next.PrimaryInterface = primaryInterfaceBox.Text.Trim();
             next.BackupInterface = backupInterfaceBox.Text.Trim();
@@ -1888,6 +1984,245 @@ namespace NetOptimizerV2
                 }
                 return false;
             }
+        }
+
+        private void StartWithWindowsBox_CheckedChanged(object sender, EventArgs e)
+        {
+            if (applyingStartupPreference || startupConfigurationInProgress || closing ||
+                settings == null || startWithWindowsBox == null)
+            {
+                return;
+            }
+
+            ApplyStartupPreference(startWithWindowsBox.Checked);
+        }
+
+        private void ApplyStartupPreference(bool enabled)
+        {
+            if (applyingStartupPreference || startupConfigurationInProgress || settings == null)
+            {
+                return;
+            }
+
+            string executablePath = Application.ExecutablePath;
+            StartupRegistrationMode previousMode = StartupManager.GetMode(executablePath);
+            bool useElevatedTask = (enabled && StartupManager.IsProtectedInstallPath(executablePath)) ||
+                                   previousMode == StartupRegistrationMode.ElevatedTask;
+            if (useElevatedTask && !NetworkInfo.IsAdministrator())
+            {
+                RequestElevatedStartupPreference(enabled, previousMode != StartupRegistrationMode.None);
+                return;
+            }
+
+            try
+            {
+                if (useElevatedTask)
+                {
+                    bool previousTaskEnabled = previousMode == StartupRegistrationMode.ElevatedTask;
+                    try
+                    {
+                        ElevatedStartupManager.SetEnabled(enabled, executablePath);
+                        StartupManager.SetEnabled(false, executablePath);
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            if (previousTaskEnabled)
+                            {
+                                ElevatedStartupManager.SetEnabled(true, executablePath);
+                            }
+                            else
+                            {
+                                ElevatedStartupManager.SetEnabled(false, executablePath);
+                            }
+                        }
+                        catch { }
+                        throw;
+                    }
+                }
+                else
+                {
+                    StartupManager.SetEnabled(enabled, executablePath);
+                }
+
+                CommitStartupPreference(enabled);
+            }
+            catch (Exception ex)
+            {
+                TryRestoreStartupRegistration(previousMode, executablePath);
+                RestoreStartupControls(previousMode != StartupRegistrationMode.None);
+                ShowStartupFailure(ex.Message);
+            }
+        }
+
+        private void RequestElevatedStartupPreference(bool enabled, bool previousEnabled)
+        {
+            startupConfigurationInProgress = true;
+            UpdateButtons();
+            AppendLog(L("正在要求系統管理員權限以設定開機自動保護。"), false);
+
+            Process process;
+            try
+            {
+                process = Process.Start(new ProcessStartInfo(Application.ExecutablePath)
+                {
+                    Arguments = "--elevated-startup=" + (enabled ? "enable" : "disable"),
+                    UseShellExecute = true,
+                    Verb = "runas"
+                });
+                if (process == null)
+                {
+                    throw new InvalidOperationException("Unable to start the elevated startup configurator.");
+                }
+            }
+            catch (Win32Exception)
+            {
+                startupConfigurationInProgress = false;
+                RestoreStartupControls(previousEnabled);
+                UpdateButtons();
+                AppendLog(L("使用者取消系統管理員權限，未變更開機自動啟動。"), true);
+                return;
+            }
+            catch (Exception ex)
+            {
+                startupConfigurationInProgress = false;
+                RestoreStartupControls(previousEnabled);
+                UpdateButtons();
+                ShowStartupFailure(ex.Message);
+                return;
+            }
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                int exitCode = -1;
+                Exception waitError = null;
+                try
+                {
+                    process.WaitForExit();
+                    exitCode = process.ExitCode;
+                }
+                catch (Exception ex)
+                {
+                    waitError = ex;
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+
+                RunOnUi(delegate
+                {
+                    CompleteElevatedStartupPreference(enabled, previousEnabled, exitCode, waitError);
+                });
+            });
+        }
+
+        private void CompleteElevatedStartupPreference(
+            bool enabled,
+            bool previousEnabled,
+            int exitCode,
+            Exception waitError)
+        {
+            startupConfigurationInProgress = false;
+            bool actualEnabled = StartupManager.IsEnabled(Application.ExecutablePath);
+            bool success = waitError == null && exitCode == 0 && actualEnabled == enabled;
+            if (success)
+            {
+                try
+                {
+                    CommitStartupPreference(enabled);
+                }
+                catch (Exception ex)
+                {
+                    RestoreStartupControls(actualEnabled);
+                    ShowStartupFailure(ex.Message);
+                }
+            }
+            else
+            {
+                RestoreStartupControls(actualEnabled ? true : previousEnabled);
+                string detail = waitError == null
+                    ? "exit code " + exitCode
+                    : waitError.Message;
+                ShowStartupFailure(detail);
+            }
+            UpdateButtons();
+        }
+
+        private void CommitStartupPreference(bool enabled)
+        {
+            MonitorSettings next = settings.Clone();
+            next.StartWithWindows = enabled;
+            SettingsStore.Save(next);
+            settings = next;
+
+            RestoreStartupControls(enabled);
+            StartupRegistrationMode mode = StartupManager.GetMode(Application.ExecutablePath);
+            if (enabled && mode == StartupRegistrationMode.ElevatedTask)
+            {
+                AppendLog(L("已啟用安裝版高權限自動保護。"), false);
+            }
+            else
+            {
+                AppendLog(enabled ? L("已啟用開機自動啟動。") : L("已停用開機自動啟動。"), false);
+            }
+        }
+
+        private void RestoreStartupControls(bool enabled)
+        {
+            applyingStartupPreference = true;
+            try
+            {
+                if (startWithWindowsBox != null) { startWithWindowsBox.Checked = enabled; }
+                if (trayStartup != null) { trayStartup.Checked = enabled; }
+            }
+            finally
+            {
+                applyingStartupPreference = false;
+            }
+        }
+
+        private void TryRestoreStartupRegistration(
+            StartupRegistrationMode previousMode,
+            string executablePath)
+        {
+            try
+            {
+                if (previousMode == StartupRegistrationMode.ElevatedTask &&
+                    NetworkInfo.IsAdministrator())
+                {
+                    ElevatedStartupManager.SetEnabled(true, executablePath);
+                    StartupManager.SetEnabled(false, executablePath);
+                }
+                else if (previousMode == StartupRegistrationMode.CurrentUserRun)
+                {
+                    if (NetworkInfo.IsAdministrator() &&
+                        StartupManager.IsProtectedInstallPath(executablePath))
+                    {
+                        ElevatedStartupManager.SetEnabled(false, executablePath);
+                    }
+                    StartupManager.SetEnabled(true, executablePath);
+                }
+                else if (previousMode == StartupRegistrationMode.None)
+                {
+                    if (NetworkInfo.IsAdministrator() &&
+                        StartupManager.IsProtectedInstallPath(executablePath))
+                    {
+                        ElevatedStartupManager.SetEnabled(false, executablePath);
+                    }
+                    StartupManager.SetEnabled(false, executablePath);
+                }
+            }
+            catch { }
+        }
+
+        private void ShowStartupFailure(string detail)
+        {
+            string message = L("開機自動啟動設定失敗：") + detail;
+            AppendLog(message, true);
+            MessageBox.Show(this, message, "NetOptimizer",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private void StartButton_Click(object sender, EventArgs e)
@@ -2304,6 +2639,13 @@ namespace NetOptimizerV2
             if (trayStart != null) { trayStart.Enabled = !running; }
             if (trayStop != null) { trayStop.Enabled = running; }
             if (trayAdmin != null) { trayAdmin.Enabled = !NetworkInfo.IsAdministrator(); }
+            if (trayStartup != null && startWithWindowsBox != null &&
+                !applyingStartupPreference)
+            {
+                trayStartup.Checked = startWithWindowsBox.Checked;
+            }
+            if (startWithWindowsBox != null) { startWithWindowsBox.Enabled = !startupConfigurationInProgress; }
+            if (trayStartup != null) { trayStartup.Enabled = !startupConfigurationInProgress; }
             if (adminButton != null) { adminButton.Enabled = !NetworkInfo.IsAdministrator(); }
             if (exportButton != null) { exportButton.Enabled = !exportingDiagnostics; }
         }
@@ -2345,8 +2687,33 @@ namespace NetOptimizerV2
             {
                 ShowInTaskbar = false;
                 Hide();
-                tray.ShowBalloonTip(1200, "NetOptimizer", L("監測仍在背景執行。"), ToolTipIcon.Info);
+                string notice = engine.IsRunning
+                    ? L("監測仍在背景執行。")
+                    : L("程式已縮到系統匣。");
+                tray.ShowBalloonTip(1200, "NetOptimizer", notice, ToolTipIcon.Info);
             }
+        }
+
+        private void MainForm_StartupShown(object sender, EventArgs e)
+        {
+            if (closing || IsDisposed)
+            {
+                return;
+            }
+
+            BeginInvoke((MethodInvoker)delegate
+            {
+                if (!closing && !IsDisposed)
+                {
+                    if (autoStartMonitoring)
+                    {
+                        TryStartMonitoring(false);
+                    }
+                    ShowInTaskbar = false;
+                    WindowState = FormWindowState.Minimized;
+                    Hide();
+                }
+            });
         }
 
         private void ShowFromTray()

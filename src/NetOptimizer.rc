@@ -13,11 +13,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Space Cat\0"
       VALUE "FileDescription", "NetOptimizer\0"
-      VALUE "FileVersion", "3.0.12.0\0"
+      VALUE "FileVersion", "3.0.13.0\0"
       VALUE "InternalName", "NetOptimizer\0"
       VALUE "OriginalFilename", "NetOptimizer.exe\0"
       VALUE "ProductName", "NetOptimizer\0"
-      VALUE "ProductVersion", "3.0.12.0\0"
+      VALUE "ProductVersion", "3.0.13.0\0"
     END
   END
   BLOCK "VarFileInfo"

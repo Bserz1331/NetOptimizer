@@ -14,8 +14,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Space Cat")]
 [assembly: AssemblyProduct("NetOptimizer")]
 [assembly: AssemblyCopyright("Copyright © Space Cat")]
-[assembly: AssemblyVersion("3.0.12.0")]
-[assembly: AssemblyFileVersion("3.0.12.0")]
+[assembly: AssemblyVersion("3.0.13.0")]
+[assembly: AssemblyFileVersion("3.0.13.0")]
 
 namespace NetOptimizerV2
 {
@@ -24,6 +24,14 @@ namespace NetOptimizerV2
         [STAThread]
         private static void Main(string[] args)
         {
+            bool startupLaunch = HasArgument(args, "--startup");
+            bool autoStartMonitoring = HasArgument(args, "--auto-start");
+            string elevatedStartupAction = ParseArgumentValue(args, "--elevated-startup=");
+            if (!string.IsNullOrWhiteSpace(elevatedStartupAction))
+            {
+                ConfigureElevatedStartup(elevatedStartupAction);
+                return;
+            }
             if (args != null && args.Any(delegate(string arg)
             {
                 return string.Equals(arg, "--self-test", StringComparison.OrdinalIgnoreCase);
@@ -186,11 +194,14 @@ namespace NetOptimizerV2
                 {
                     if (!acquired)
                     {
-                        MessageBox.Show("NetOptimizer 已經在執行中。請從系統匣開啟現有視窗。",
-                                        "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        if (!startupLaunch)
+                        {
+                            MessageBox.Show("NetOptimizer 已經在執行中。請從系統匣開啟現有視窗。",
+                                            "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
                         return;
                     }
-                    Application.Run(new MainForm());
+                    Application.Run(new MainForm(startupLaunch, autoStartMonitoring));
                 }
             }
             catch (Exception ex)
@@ -215,6 +226,70 @@ namespace NetOptimizerV2
                     "NetOptimizer",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
+                Environment.ExitCode = 1;
+            }
+        }
+
+        private static void ConfigureElevatedStartup(string action)
+        {
+            bool enabled;
+            if (string.Equals(action, "enable", StringComparison.OrdinalIgnoreCase))
+            {
+                enabled = true;
+            }
+            else if (string.Equals(action, "disable", StringComparison.OrdinalIgnoreCase))
+            {
+                enabled = false;
+            }
+            else
+            {
+                Console.Error.WriteLine("Unknown elevated startup action.");
+                Environment.ExitCode = 2;
+                return;
+            }
+
+            try
+            {
+                if (enabled && !StartupManager.IsProtectedInstallPath(Application.ExecutablePath))
+                {
+                    throw new InvalidOperationException(
+                        "Elevated startup is available only for a protected Program Files installation.");
+                }
+                if (!NetworkInfo.IsAdministrator())
+                {
+                    throw new InvalidOperationException(
+                        "Administrator permission is required to configure elevated startup.");
+                }
+
+                string executablePath = Application.ExecutablePath;
+                bool previousTaskEnabled = ElevatedStartupManager.IsEnabled();
+                try
+                {
+                    ElevatedStartupManager.SetEnabled(enabled, executablePath);
+                    StartupManager.SetEnabled(false, executablePath);
+                }
+                catch
+                {
+                    try
+                    {
+                        if (previousTaskEnabled)
+                        {
+                            ElevatedStartupManager.SetEnabled(true, executablePath);
+                        }
+                        else
+                        {
+                            ElevatedStartupManager.SetEnabled(false, executablePath);
+                        }
+                    }
+                    catch { }
+                    throw;
+                }
+                Environment.ExitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("NetOptimizer elevated startup: FAIL");
+                Console.Error.WriteLine(ex.Message);
                 Environment.ExitCode = 1;
             }
         }
@@ -254,6 +329,14 @@ namespace NetOptimizerV2
             }
             return null;
         }
+
+        private static bool HasArgument(string[] args, string value)
+        {
+            return args != null && args.Any(delegate(string arg)
+            {
+                return string.Equals(arg, value, StringComparison.OrdinalIgnoreCase);
+            });
+        }
     }
 
     internal static class SelfTest
@@ -271,9 +354,47 @@ namespace NetOptimizerV2
                     settings.FailoverBackupMetric != 50 || settings.FailoverTargets.Count != 2 ||
                     settings.SmartSelectionEnabled || settings.SmartEwmaAlpha < 0.149 ||
                     settings.SmartEwmaAlpha > 0.151 ||
-                    settings.Language != AppLanguage.TraditionalChinese)
+                    settings.Language != AppLanguage.TraditionalChinese ||
+                    settings.StartWithWindows)
                 {
                     throw new InvalidOperationException("預設設定驗證失敗。");
+                }
+
+                string startupCommand = StartupManager.BuildCommandLine(
+                    @"C:\Program Files\NetOptimizer\NetOptimizer.exe");
+                if (!string.Equals(
+                        startupCommand,
+                        @"""C:\Program Files\NetOptimizer\NetOptimizer.exe"" --startup",
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Windows startup command quoting validation failed.");
+                }
+
+                if (!StartupManager.IsProtectedInstallPath(
+                        @"C:\Program Files\NetOptimizer\NetOptimizer.exe") ||
+                    !StartupManager.IsProtectedInstallPath(
+                        @"C:\Program Files (x86)\NetOptimizer\NetOptimizer.exe") ||
+                    StartupManager.IsProtectedInstallPath(
+                        @"D:\Portable\NetOptimizer\NetOptimizer.exe") ||
+                    StartupManager.IsProtectedInstallPath(
+                        @"C:\Program Files Backup\NetOptimizer.exe") ||
+                    !string.Equals(
+                        ElevatedStartupManager.BuildTaskAction(
+                            @"C:\Program Files\NetOptimizer\NetOptimizer.exe"),
+                        @"""C:\Program Files\NetOptimizer\NetOptimizer.exe"" --startup --auto-start",
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Elevated startup path or command validation failed.");
+                }
+
+                string taskArguments = ElevatedStartupManager.BuildCreateArguments(
+                    @"C:\Program Files\NetOptimizer\NetOptimizer.exe");
+                if (taskArguments.IndexOf("/SC ONLOGON", StringComparison.OrdinalIgnoreCase) < 0 ||
+                    taskArguments.IndexOf("/RL HIGHEST", StringComparison.OrdinalIgnoreCase) < 0 ||
+                    taskArguments.IndexOf("--auto-start", StringComparison.OrdinalIgnoreCase) < 0 ||
+                    taskArguments.IndexOf(ElevatedStartupManager.TaskName, StringComparison.Ordinal) < 0)
+                {
+                    throw new InvalidOperationException("Elevated startup task arguments validation failed.");
                 }
 
                 string warning;

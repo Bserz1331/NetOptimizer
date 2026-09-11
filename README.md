@@ -4,7 +4,7 @@ English documentation: [README.en.md](README.en.md)
 
 Windows 網路監測、A/B 備援切換與慢速 EWMA 智慧選路工具。
 
-目前穩定版本為 v3.0.12：新增繁體中文／English 介面切換，語言偏好會保存到設定檔；並延續 v3.0.11 的網路自動偵測與 A/B 啟動安全：備援只會選擇 `IsReady` 線路、排除 `NotPresent` 下拉項目，沒有第二條就緒線路時會清空備援並提示；非管理員不會啟動 A/B。
+目前穩定版本為 v3.0.13：加入安裝版高權限開機自動保護，並延續繁體中文／English 介面切換、網路自動偵測與 A/B 啟動安全：備援只會選擇 `IsReady` 線路、排除 `NotPresent` 下拉項目，沒有第二條就緒線路時會清空備援並提示；非管理員不會啟動 A/B。
 
 ## 專案結構
 
@@ -23,13 +23,13 @@ GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.1
 在本目錄的 Windows PowerShell 執行：
 
 ```powershell
-.\build.ps1 -Version 3.0.12 -OutputDirectory .\dist
+.\build.ps1 -Version 3.0.13 -OutputDirectory .\dist
 ```
 
 簽章憑證可選；沒有憑證時會保持未簽章並明確顯示 skipped：
 
 ```powershell
-  .\build.ps1 -Version 3.0.12 `
+  .\build.ps1 -Version 3.0.13 `
   -SigningCertificateThumbprint "憑證指紋" `
   -TimestampUrl "https://你的時間戳服務"
 ```
@@ -37,20 +37,22 @@ GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.1
 ## 測試
 
 ```powershell
-.\dist\NetOptimizer-v3.0.12.exe --self-test
-.\dist\NetOptimizer-v3.0.12.exe --failover-simulation
-.\dist\NetOptimizer-v3.0.12.exe --interface-probe-test
-.\dist\NetOptimizer-v3.0.12.exe --diagnostics-test
-.\dist\NetOptimizer-v3.0.12.exe --interface-metric-test
-.\dist\NetOptimizer-v3.0.12.exe --ui-layout-test
-.\dist\NetOptimizer-v3.0.12.exe --gui-startup-test
-.\dist\NetOptimizer-v3.0.12.exe --support-snapshot=.\build\support.png
-.\dist\NetOptimizer-v3.0.12.exe --soak-test --seconds=60
+.\dist\NetOptimizer-v3.0.13.exe --self-test
+.\dist\NetOptimizer-v3.0.13.exe --failover-simulation
+.\dist\NetOptimizer-v3.0.13.exe --interface-probe-test
+.\dist\NetOptimizer-v3.0.13.exe --diagnostics-test
+.\dist\NetOptimizer-v3.0.13.exe --interface-metric-test
+.\dist\NetOptimizer-v3.0.13.exe --ui-layout-test
+.\dist\NetOptimizer-v3.0.13.exe --gui-startup-test
+.\dist\NetOptimizer-v3.0.13.exe --support-snapshot=.\build\support.png
+.\dist\NetOptimizer-v3.0.13.exe --soak-test --seconds=60
 ```
 
 ## 語言
 
 啟動程式後，使用右上角的語言下拉選單切換 `繁體中文` 或 `English`。切換會立即套用到主畫面、系統匣選單與支持開發視窗，並保存到 `%LOCALAPPDATA%\NetOptimizer\settings.xml`。網卡名稱、測試目標與診斷資料保持原始內容。
+
+權限列的「開機自動啟動」預設關閉。若程式位於 `C:\Program Files` 或 `C:\Program Files (x86)`，啟用時會只要求一次 UAC，建立工作排程器的最高權限登入工作；Windows 登入後會自動開始監測並縮到系統匣。若程式位於其他資料夾，則使用目前使用者的 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，登入後啟動並縮到系統匣，不會自動提權。portable 版本仍可直接使用；要使用安裝版的高權限自啟，請將程式放在受 Windows 保護的 Program Files 目錄，不要從可寫入的下載或桌面資料夾建立高權限工作。
 
 `--interface-probe-test` 只做唯讀的來源 IPv4 TCP 探測，不會改動 metric、route、DNS 或 MTU。
 

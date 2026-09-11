@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace NetOptimizerV2
 {
@@ -32,6 +33,9 @@ namespace NetOptimizerV2
             report.AppendLine();
 
             report.AppendLine("[Settings]");
+            report.AppendLine("StartWithWindows=" + settings.StartWithWindows);
+            report.AppendLine("StartupMode=" + StartupManager.GetMode(Application.ExecutablePath));
+            report.AppendLine("ProtectedInstallPath=" + StartupManager.IsProtectedInstallPath(Application.ExecutablePath));
             report.AppendLine("InterfaceName=" + Safe(settings.InterfaceName));
             report.AppendLine("Targets=" + Safe(string.Join(", ", settings.Targets ?? new List<string>())));
             report.AppendLine("Port=" + settings.Port);
