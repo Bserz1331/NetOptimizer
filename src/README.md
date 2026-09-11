@@ -1,4 +1,4 @@
-# NetOptimizer v3.0.13
+# NetOptimizer v3.0.14
 
 NetOptimizer 是 Windows 上的網路監測、一般刷新與 A/B 備援切換工具。v3 將原本的 NetOptimizer 與 DoubleNet 邏輯整合，保留手動控制，並把長時間執行、失敗復原與可驗證性放在優先位置。
 
@@ -25,6 +25,7 @@ NetOptimizer 是 Windows 上的網路監測、一般刷新與 A/B 備援切換�
 - 自動偵測安全選路：自動選出的 A/B 僅來自 `IsReady` 介面；找不到第二條就緒線路時 B 保持空白並提示使用者；介面下拉清單排除 `NotPresent`。
 - 權限閘門：非管理員啟動 A/B 會在監測引擎開始前被阻止，並聚焦「重新以管理員啟動」入口。
 - 語言切換：右上角可切換 `繁體中文`／`English`；偏好會保存到設定檔，並套用到主視窗、系統匣與支持開發視窗。
+- 更新提示：啟動後背景檢查 GitHub 最新穩定 Release，成功檢查間隔 24 小時；有新版本時顯示標題區與系統匣提示，並可手動查看或忽略版本。不自動下載、執行或覆蓋 EXE。
 
 ## 慢速 EWMA 智慧選路
 
@@ -49,13 +50,13 @@ NetOptimizer 是 Windows 上的網路監測、一般刷新與 A/B 備援切換�
 在 Windows PowerShell 執行：
 
 ```powershell
-./build.ps1 -Version 3.0.13 -OutputDirectory ./build
+./build.ps1 -Version 3.0.14 -OutputDirectory ./build
 ```
 
 若已有程式碼簽章憑證，可在建置時選擇性簽章；沒有憑證時腳本會明確輸出 skipped：
 
 ```powershell
-./build.ps1 -Version 3.0.13 -OutputDirectory ./build `
+./build.ps1 -Version 3.0.14 -OutputDirectory ./build `
   -SigningCertificateThumbprint "憑證指紋" `
   -TimestampUrl "https://你的時間戳服務"
 ```
@@ -63,15 +64,17 @@ NetOptimizer 是 Windows 上的網路監測、一般刷新與 A/B 備援切換�
 可執行檔支援下列檢查模式：
 
 ```powershell
-./NetOptimizer-v3.0.13.exe --self-test
-./NetOptimizer-v3.0.13.exe --failover-simulation
-./NetOptimizer-v3.0.13.exe --interface-probe-test
-./NetOptimizer-v3.0.13.exe --interface-metric-test
-./NetOptimizer-v3.0.13.exe --ui-layout-test
-./NetOptimizer-v3.0.13.exe --gui-startup-test
-./NetOptimizer-v3.0.13.exe --support-snapshot=./build/support.png
-./NetOptimizer-v3.0.13.exe --stability-test
-./NetOptimizer-v3.0.13.exe --soak-test --seconds=60
+./NetOptimizer-v3.0.14.exe --self-test
+./NetOptimizer-v3.0.14.exe --failover-simulation
+./NetOptimizer-v3.0.14.exe --interface-probe-test
+./NetOptimizer-v3.0.14.exe --interface-metric-test
+./NetOptimizer-v3.0.14.exe --ui-layout-test
+./NetOptimizer-v3.0.14.exe --gui-startup-test
+./NetOptimizer-v3.0.14.exe --update-check-test
+./NetOptimizer-v3.0.14.exe --update-check-live-test
+./NetOptimizer-v3.0.14.exe --support-snapshot=./build/support.png
+./NetOptimizer-v3.0.14.exe --stability-test
+./NetOptimizer-v3.0.14.exe --soak-test --seconds=60
 ```
 
 `--interface-probe-test` 只讀取目前可用介面並以各介面的來源 IPv4 做 TCP probe，不會改 metric、MTU、DNS 或 route。真正的 A/B route 切換必須在管理員權限下、並於可接受短暫連線變化的環境進行。
@@ -79,3 +82,5 @@ NetOptimizer 是 Windows 上的網路監測、一般刷新與 A/B 備援切換�
 `--interface-metric-test` 只讀取目前介面的 InterfaceMetric；它不會寫入 metric，適合先確認管理員權限與 PowerShell 回傳內容。
 
 設定檔位置：`%LOCALAPPDATA%\NetOptimizer\settings.xml`。
+
+更新檢查狀態位置：`%LOCALAPPDATA%\NetOptimizer\update-state.xml`。更新檢查使用 GitHub Release API；逾時或網路錯誤只記錄手動檢查結果，不會阻止一般監測或 A/B 功能。

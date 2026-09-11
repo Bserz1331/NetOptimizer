@@ -68,6 +68,19 @@ namespace NetOptimizerV2
             report.AppendLine("SmartEwmaAlpha=" + settings.SmartEwmaAlpha.ToString("0.###"));
             report.AppendLine();
 
+            string updateStateWarning;
+            UpdateState updateState = UpdateStateStore.Load(out updateStateWarning);
+            report.AppendLine("[UpdateCheck]");
+            report.AppendLine("StatePath=" + Safe(UpdateStateStore.StatePath));
+            report.AppendLine("LastSuccessfulCheckUtc=" +
+                              (updateState == null ? string.Empty : updateState.LastSuccessfulCheckUtc.ToString("o")));
+            report.AppendLine("LastNotifiedVersion=" +
+                              Safe(updateState == null ? string.Empty : updateState.LastNotifiedVersion));
+            report.AppendLine("IgnoredVersion=" +
+                              Safe(updateState == null ? string.Empty : updateState.IgnoredVersion));
+            report.AppendLine("StateWarning=" + Safe(updateStateWarning));
+            report.AppendLine();
+
             report.AppendLine("[Interfaces]");
             List<InterfaceSnapshot> snapshots = NetworkInfo.GetInterfaceSnapshots();
             foreach (InterfaceSnapshot snapshot in snapshots)

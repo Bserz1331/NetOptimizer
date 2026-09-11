@@ -14,8 +14,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Space Cat")]
 [assembly: AssemblyProduct("NetOptimizer")]
 [assembly: AssemblyCopyright("Copyright © Space Cat")]
-[assembly: AssemblyVersion("3.0.13.0")]
-[assembly: AssemblyFileVersion("3.0.13.0")]
+[assembly: AssemblyVersion("3.0.14.0")]
+[assembly: AssemblyFileVersion("3.0.14.0")]
 
 namespace NetOptimizerV2
 {
@@ -88,6 +88,42 @@ namespace NetOptimizerV2
             }))
             {
                 SelfTest.RunDiagnostics();
+                return;
+            }
+            if (args != null && args.Any(delegate(string arg)
+            {
+                return string.Equals(arg, "--update-check-test", StringComparison.OrdinalIgnoreCase);
+            }))
+            {
+                try
+                {
+                    UpdateChecker.RunSelfTest();
+                    Environment.ExitCode = 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("NetOptimizer update checker test: FAIL");
+                    Console.Error.WriteLine(ex.Message);
+                    Environment.ExitCode = 1;
+                }
+                return;
+            }
+            if (args != null && args.Any(delegate(string arg)
+            {
+                return string.Equals(arg, "--update-check-live-test", StringComparison.OrdinalIgnoreCase);
+            }))
+            {
+                try
+                {
+                    UpdateChecker.RunLiveSelfTest();
+                    Environment.ExitCode = 0;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("NetOptimizer live update check: FAIL");
+                    Console.Error.WriteLine(ex.Message);
+                    Environment.ExitCode = 1;
+                }
                 return;
             }
             if (args != null && args.Any(delegate(string arg)
@@ -369,6 +405,8 @@ namespace NetOptimizerV2
                 {
                     throw new InvalidOperationException("Windows startup command quoting validation failed.");
                 }
+
+                UpdateChecker.RunSelfTest();
 
                 if (!StartupManager.IsProtectedInstallPath(
                         @"C:\Program Files\NetOptimizer\NetOptimizer.exe") ||

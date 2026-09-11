@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "3.0.13",
+    [string]$Version = "3.0.14",
     [string]$OutputDirectory = "",
     [string]$SigningCertificateThumbprint = "",
     [string]$TimestampUrl = ""
@@ -54,7 +54,7 @@ $cscArgs = @(
     ("/out:" + $exePath),
     ("/win32res:" + $resourcePath)
 )
-foreach ($reference in @("System.dll", "System.Core.dll", "System.Drawing.dll", "System.Windows.Forms.dll", "System.Xml.dll")) {
+foreach ($reference in @("System.dll", "System.Core.dll", "System.Drawing.dll", "System.Runtime.Serialization.dll", "System.Windows.Forms.dll", "System.Xml.dll")) {
     $cscArgs += "/reference:$([IO.Path]::Combine((Split-Path $compiler), $reference))"
 }
 $cscArgs += Get-ChildItem -LiteralPath $root -Filter "*.cs" | Sort-Object Name | ForEach-Object { $_.FullName }

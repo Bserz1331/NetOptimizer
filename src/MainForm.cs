@@ -25,7 +25,12 @@ namespace NetOptimizerV2
         private readonly Queue<string> visibleLog = new Queue<string>();
         private readonly bool startMinimized;
         private readonly bool autoStartMonitoring;
+        private readonly bool updateChecksEnabled;
         private MonitorSettings settings;
+        private UpdateState updateState;
+        private UpdateInfo availableUpdate;
+        private CancellationTokenSource updateCheckCancellation;
+        private bool updateCheckInProgress;
         private bool closing;
 
         private ComboBox interfaceBox;
@@ -59,6 +64,7 @@ namespace NetOptimizerV2
         private CheckBox mtuBox;
         private Label statusValue;
         private Label lastProbeValue;
+        private LinkLabel updateLink;
         private Label permissionValue;
         private Label failoverStatusValue;
         private Label failoverHealthValue;
@@ -111,6 +117,9 @@ namespace NetOptimizerV2
         private ToolStripMenuItem trayStop;
         private ToolStripMenuItem trayAdmin;
         private ToolStripMenuItem trayStartup;
+        private ToolStripMenuItem trayCheckUpdates;
+        private ToolStripMenuItem trayUpdate;
+        private ToolStripMenuItem trayIgnoreUpdate;
         private FailoverStatus latestFailoverStatus;
         private bool exportingDiagnostics;
         private bool followLog = true;
@@ -154,11 +163,19 @@ namespace NetOptimizerV2
         }
 
         public MainForm(bool startMinimized, bool autoStartMonitoring)
+            : this(startMinimized, autoStartMonitoring, true)
+        {
+        }
+
+        private MainForm(bool startMinimized, bool autoStartMonitoring, bool enableUpdateChecks)
         {
             this.startMinimized = startMinimized;
             this.autoStartMonitoring = autoStartMonitoring;
+            updateChecksEnabled = enableUpdateChecks;
             string warning;
             settings = SettingsStore.Load(out warning);
+            string updateStateWarning;
+            updateState = UpdateStateStore.Load(out updateStateWarning);
             currentLanguage = Localization.Normalize(settings.Language);
             settings.Language = currentLanguage;
             RecoveryReport recovery = null;
@@ -184,6 +201,10 @@ namespace NetOptimizerV2
             {
                 AppendLog(warning, true);
             }
+            if (!string.IsNullOrWhiteSpace(updateStateWarning))
+            {
+                AppendLog(updateStateWarning, true);
+            }
             if (recovery != null)
             {
                 foreach (string message in recovery.Messages)
@@ -196,6 +217,10 @@ namespace NetOptimizerV2
             if (startMinimized || autoStartMonitoring)
             {
                 Shown += MainForm_StartupShown;
+            }
+            if (updateChecksEnabled)
+            {
+                Shown += MainForm_CheckUpdatesOnShown;
             }
         }
 
@@ -278,7 +303,7 @@ namespace NetOptimizerV2
             };
             headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64F));
             headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 290F));
+            headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 330F));
             headerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             brandImage = new PictureBox
@@ -324,18 +349,36 @@ namespace NetOptimizerV2
             {
                 Dock = DockStyle.Fill,
                 BackColor = Background,
-                ColumnCount = 2,
+                ColumnCount = 3,
                 RowCount = 1,
                 Margin = new Padding(0, 2, 0, 0),
                 Padding = new Padding(0)
             };
             headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92F));
             headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108F));
             modeButton = ButtonOf("進階設定 ▸", 0, 0, 128, 24, false);
             modeButton.Dock = DockStyle.Fill;
-            modeButton.Margin = new Padding(0, 0, 6, 0);
+            modeButton.Margin = new Padding(0, 0, 4, 0);
             modeButton.Click += delegate { ToggleUiMode(); };
             headerActions.Controls.Add(modeButton, 0, 0);
+            updateLink = new LinkLabel
+            {
+                Text = "檢查更新",
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                AutoEllipsis = true,
+                LinkColor = Accent,
+                ActiveLinkColor = TextColor,
+                VisitedLinkColor = Accent,
+                BackColor = Background,
+                Margin = new Padding(0, 0, 4, 0),
+                Visible = false
+            };
+            Localization.Mark(updateLink, "檢查更新");
+            updateLink.LinkClicked += delegate { OpenAvailableUpdate(); };
+            headerActions.Controls.Add(updateLink, 1, 0);
             languageBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
@@ -352,7 +395,7 @@ namespace NetOptimizerV2
             languageBox.Items.Add(Localization.LanguageName(AppLanguage.English));
             languageBox.SelectedIndex = 0;
             languageBox.SelectedIndexChanged += LanguageBox_SelectedIndexChanged;
-            headerActions.Controls.Add(languageBox, 1, 0);
+            headerActions.Controls.Add(languageBox, 2, 0);
             headerStatusLayout.Controls.Add(headerActions, 0, 2);
             headerLayout.Controls.Add(headerStatusLayout, 2, 0);
             mainLayout.Controls.Add(headerLayout, 0, 0);
@@ -654,6 +697,24 @@ namespace NetOptimizerV2
             Localization.Mark(trayRefreshItem, "立即刷新");
             trayMenu.Items.Add(trayRefreshItem);
             trayMenu.Items.Add(new ToolStripSeparator());
+            trayCheckUpdates = new ToolStripMenuItem("檢查更新", null, delegate { CheckForUpdates(true); });
+            Localization.Mark(trayCheckUpdates, "檢查更新");
+            trayMenu.Items.Add(trayCheckUpdates);
+            trayUpdate = new ToolStripMenuItem("查看更新", null, delegate { OpenAvailableUpdate(); })
+            {
+                Visible = false,
+                Enabled = false
+            };
+            Localization.Mark(trayUpdate, "查看更新");
+            trayMenu.Items.Add(trayUpdate);
+            trayIgnoreUpdate = new ToolStripMenuItem("忽略此版本", null, delegate { IgnoreAvailableUpdate(); })
+            {
+                Visible = false,
+                Enabled = false
+            };
+            Localization.Mark(trayIgnoreUpdate, "忽略此版本");
+            trayMenu.Items.Add(trayIgnoreUpdate);
+            trayMenu.Items.Add(new ToolStripSeparator());
             trayStartup = new ToolStripMenuItem("開機自動啟動")
             {
                 CheckOnClick = true
@@ -671,6 +732,7 @@ namespace NetOptimizerV2
             Localization.Mark(trayExitItem, "結束");
             trayMenu.Items.Add(trayExitItem);
             tray.ContextMenuStrip = trayMenu;
+            tray.BalloonTipClicked += delegate { OpenAvailableUpdate(); };
             tray.MouseDoubleClick += delegate(object sender, MouseEventArgs e)
             {
                 if (e.Button == MouseButtons.Left) { ShowFromTray(); }
@@ -752,6 +814,7 @@ namespace NetOptimizerV2
             UpdateFailoverAdvanced();
             UpdateBeginnerStatus();
             UpdateUiMode();
+            UpdateUpdateUi();
 
             if (settings != null)
             {
@@ -812,6 +875,7 @@ namespace NetOptimizerV2
                 ? string.Empty : failoverHealthValue.Text);
             uiToolTip.SetToolTip(adminButton, L("重新啟動並要求系統管理員權限；不會自動提權。"));
             uiToolTip.SetToolTip(supportButton, L("開啟支持開發選項：Ko-fi 與加密貨幣地址。"));
+            uiToolTip.SetToolTip(updateLink, L("檢查 GitHub 是否有較新的穩定版本。"));
             uiToolTip.SetToolTip(logBox, L("右鍵可複製或清除紀錄，也可暫停自動捲動。"));
             UpdateInterfaceTooltip(interfaceBox);
             UpdateInterfaceTooltip(primaryInterfaceBox);
@@ -1152,7 +1216,7 @@ namespace NetOptimizerV2
         internal static void RunUiLayoutSelfTest()
         {
             RunAutoDetectSelectionSelfTest();
-            using (MainForm form = new MainForm())
+            using (MainForm form = new MainForm(false, false, false))
             {
                 form.CreateControl();
                 form.ShowInTaskbar = false;
@@ -1187,6 +1251,33 @@ namespace NetOptimizerV2
                 {
                     throw new InvalidOperationException("品牌圖示未載入。");
                 }
+                form.availableUpdate = new UpdateInfo(
+                    new Version(3, 0, 15, 0),
+                    "v3.0.15",
+                    UpdateChecker.RepositoryReleaseUrl + "/tag/v3.0.15");
+                form.UpdateUpdateUi();
+                form.PerformLayout();
+                Rectangle updateBounds = new Rectangle(
+                    form.updateLink.PointToScreen(Point.Empty), form.updateLink.ClientSize);
+                Rectangle updateHeaderBounds = new Rectangle(
+                    form.headerLayout.PointToScreen(Point.Empty), form.headerLayout.ClientSize);
+                if (!form.updateLink.Visible || form.updateLink.Text != "更新 v3.0.15" ||
+                    form.trayUpdate.Owner != form.trayMenu ||
+                    form.trayIgnoreUpdate.Owner != form.trayMenu || !form.trayUpdate.Enabled ||
+                    !form.trayIgnoreUpdate.Enabled ||
+                    updateBounds.Width <= 0 || updateBounds.Height < 18 ||
+                    !updateHeaderBounds.Contains(updateBounds))
+                {
+                    throw new InvalidOperationException(
+                        "更新提示入口布局或系統匣入口未正確顯示：link=" + form.updateLink.Visible +
+                        ", trayUpdateOwner=" + (form.trayUpdate.Owner == form.trayMenu) +
+                        ", trayIgnoreOwner=" + (form.trayIgnoreUpdate.Owner == form.trayMenu) +
+                        ", trayUpdateEnabled=" + form.trayUpdate.Enabled + ", trayIgnoreEnabled=" +
+                        form.trayIgnoreUpdate.Enabled + ", linkBounds=" + updateBounds +
+                        ", headerBounds=" + updateHeaderBounds);
+                }
+                form.availableUpdate = null;
+                form.UpdateUpdateUi();
                 AppLanguage savedLanguage = form.currentLanguage;
                 form.currentLanguage = AppLanguage.English;
                 form.ApplyLanguageToUi(false);
@@ -1353,7 +1444,7 @@ namespace NetOptimizerV2
         internal static void RunGuiStartupSelfTest()
         {
             string hiddenFailure = null;
-            using (MainForm hiddenForm = new MainForm(true, false))
+            using (MainForm hiddenForm = new MainForm(true, false, false))
             using (System.Windows.Forms.Timer hiddenTimer = new System.Windows.Forms.Timer())
             {
                 hiddenForm.Opacity = 0.0;
@@ -1391,7 +1482,7 @@ namespace NetOptimizerV2
             }
 
             string failure = null;
-            using (MainForm form = new MainForm())
+            using (MainForm form = new MainForm(false, false, false))
             using (System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer())
             {
                 form.Opacity = 0.0;
@@ -1459,7 +1550,7 @@ namespace NetOptimizerV2
                 Directory.CreateDirectory(directory);
             }
 
-            using (MainForm form = new MainForm())
+            using (MainForm form = new MainForm(false, false, false))
             {
                 form.currentLanguage = Localization.Normalize(language);
                 form.ApplyLanguageToUi(false);
@@ -1599,7 +1690,7 @@ namespace NetOptimizerV2
             if (form.headerLayout == null || form.headerStatusLayout == null ||
                 form.titleLabel == null || form.statusValue == null ||
                 form.lastProbeValue == null || form.modeButton == null ||
-                form.languageBox == null)
+                form.languageBox == null || form.updateLink == null)
             {
                 throw new InvalidOperationException(stage + "標題區控制項未完整建立。");
             }
@@ -2648,6 +2739,7 @@ namespace NetOptimizerV2
             if (trayStartup != null) { trayStartup.Enabled = !startupConfigurationInProgress; }
             if (adminButton != null) { adminButton.Enabled = !NetworkInfo.IsAdministrator(); }
             if (exportButton != null) { exportButton.Enabled = !exportingDiagnostics; }
+            UpdateUpdateUi();
         }
 
         private void AppendLog(string message, bool warning)
@@ -2679,6 +2771,209 @@ namespace NetOptimizerV2
             }
             catch (ObjectDisposedException) { }
             catch (InvalidOperationException) { }
+        }
+
+        private void MainForm_CheckUpdatesOnShown(object sender, EventArgs e)
+        {
+            if (!updateChecksEnabled || closing || IsDisposed) { return; }
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    if (!closing && !IsDisposed)
+                    {
+                        CheckForUpdates(false);
+                    }
+                });
+            }
+            catch (InvalidOperationException) { }
+        }
+
+        private async void CheckForUpdates(bool force)
+        {
+            if (!updateChecksEnabled || closing || IsDisposed || updateCheckInProgress)
+            {
+                return;
+            }
+            if (!UpdateChecker.ShouldCheck(updateState, force, DateTime.UtcNow))
+            {
+                return;
+            }
+
+            updateCheckInProgress = true;
+            UpdateUpdateUi();
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            updateCheckCancellation = cancellation;
+            UpdateCheckResult result = null;
+            try
+            {
+                result = await UpdateChecker.CheckAsync(
+                    typeof(MainForm).Assembly.GetName().Version,
+                    cancellation.Token);
+            }
+            catch (Exception ex)
+            {
+                result = UpdateCheckResult.Failure(ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                updateCheckInProgress = false;
+                if (ReferenceEquals(updateCheckCancellation, cancellation))
+                {
+                    updateCheckCancellation = null;
+                }
+                cancellation.Dispose();
+            }
+
+            if (closing || IsDisposed || result == null)
+            {
+                return;
+            }
+            if (!result.Succeeded)
+            {
+                if (force && !string.Equals(result.Error, "Update check cancelled.", StringComparison.Ordinal))
+                {
+                    AppendLog(L("更新檢查失敗：") + result.Error, true);
+                    if (tray != null)
+                    {
+                        tray.ShowBalloonTip(
+                            3500,
+                            L("檢查更新失敗"),
+                            L("請稍後再試。"),
+                            ToolTipIcon.Warning);
+                    }
+                }
+                UpdateUpdateUi();
+                return;
+            }
+
+            updateState.LastSuccessfulCheckUtc = DateTime.UtcNow;
+            availableUpdate = result.IsUpdateAvailable && result.Update != null
+                ? result.Update
+                : null;
+            if (availableUpdate != null &&
+                string.Equals(updateState.IgnoredVersion, availableUpdate.VersionKey, StringComparison.OrdinalIgnoreCase))
+            {
+                availableUpdate = null;
+            }
+
+            bool notify = availableUpdate != null &&
+                          !string.Equals(
+                              updateState.LastNotifiedVersion,
+                              availableUpdate.VersionKey,
+                              StringComparison.OrdinalIgnoreCase);
+            if (notify)
+            {
+                updateState.LastNotifiedVersion = availableUpdate.VersionKey;
+            }
+            SaveUpdateState(true);
+            UpdateUpdateUi();
+
+            if (notify && availableUpdate != null && tray != null)
+            {
+                tray.ShowBalloonTip(
+                    5000,
+                    L("有新版本"),
+                    L("發現 ") + availableUpdate.DisplayVersion + L("，點擊查看更新。"),
+                    ToolTipIcon.Info);
+            }
+            else if (force && availableUpdate == null)
+            {
+                AppendLog(L("目前已是最新版本。"), false);
+                if (tray != null)
+                {
+                    tray.ShowBalloonTip(
+                        2500,
+                        L("檢查更新"),
+                        L("目前已是最新版本。"),
+                        ToolTipIcon.Info);
+                }
+            }
+        }
+
+        private void UpdateUpdateUi()
+        {
+            if (updateLink != null)
+            {
+                bool visible = availableUpdate != null;
+                TableLayoutPanel headerActions = updateLink.Parent as TableLayoutPanel;
+                if (headerActions != null && headerActions.ColumnStyles.Count > 1)
+                {
+                    headerActions.ColumnStyles[1].Width = visible ? 92F : 0F;
+                }
+                updateLink.Visible = visible;
+                updateLink.Enabled = visible;
+                updateLink.Text = visible
+                    ? L("更新") + " " + availableUpdate.DisplayVersion
+                    : L("檢查更新");
+            }
+            if (trayCheckUpdates != null)
+            {
+                trayCheckUpdates.Text = updateCheckInProgress
+                    ? L("檢查更新中…")
+                    : L("檢查更新");
+                trayCheckUpdates.Enabled = !updateCheckInProgress;
+            }
+            if (trayUpdate != null)
+            {
+                trayUpdate.Visible = availableUpdate != null;
+                trayUpdate.Enabled = availableUpdate != null;
+                trayUpdate.Text = availableUpdate == null
+                    ? L("查看更新")
+                    : L("查看更新") + " " + availableUpdate.DisplayVersion;
+            }
+            if (trayIgnoreUpdate != null)
+            {
+                trayIgnoreUpdate.Visible = availableUpdate != null;
+                trayIgnoreUpdate.Enabled = availableUpdate != null;
+            }
+        }
+
+        private bool SaveUpdateState(bool logFailure)
+        {
+            try
+            {
+                UpdateStateStore.Save(updateState);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (logFailure)
+                {
+                    AppendLog(L("更新狀態儲存失敗：") + ex.Message, true);
+                }
+                return false;
+            }
+        }
+
+        private void OpenAvailableUpdate()
+        {
+            if (availableUpdate == null || string.IsNullOrWhiteSpace(availableUpdate.ReleaseUrl))
+            {
+                return;
+            }
+            try
+            {
+                Process.Start(new ProcessStartInfo(availableUpdate.ReleaseUrl)
+                {
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                AppendLog(L("無法開啟更新頁面：") + ex.Message, true);
+            }
+        }
+
+        private void IgnoreAvailableUpdate()
+        {
+            if (availableUpdate == null) { return; }
+            updateState.IgnoredVersion = availableUpdate.VersionKey;
+            string version = availableUpdate.DisplayVersion;
+            availableUpdate = null;
+            SaveUpdateState(true);
+            UpdateUpdateUi();
+            AppendLog(L("已忽略版本：") + version, false);
         }
 
         private void MainForm_Resize(object sender, EventArgs e)
@@ -2727,6 +3022,10 @@ namespace NetOptimizerV2
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             closing = true;
+            if (updateCheckCancellation != null)
+            {
+                try { updateCheckCancellation.Cancel(); } catch { }
+            }
             TrySaveSettings(false);
             if (tray != null) { tray.Visible = false; }
             engine.Stop();
@@ -3032,6 +3331,12 @@ namespace NetOptimizerV2
         {
             if (disposing)
             {
+                if (updateCheckCancellation != null)
+                {
+                    try { updateCheckCancellation.Cancel(); } catch { }
+                    updateCheckCancellation.Dispose();
+                    updateCheckCancellation = null;
+                }
                 engine.LogRaised -= Engine_LogRaised;
                 engine.ProbeCompleted -= Engine_ProbeCompleted;
                 engine.FailoverStatusChanged -= Engine_FailoverStatusChanged;
