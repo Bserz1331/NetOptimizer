@@ -14,8 +14,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Space Cat")]
 [assembly: AssemblyProduct("NetOptimizer")]
 [assembly: AssemblyCopyright("Copyright © Space Cat")]
-[assembly: AssemblyVersion("3.0.15.0")]
-[assembly: AssemblyFileVersion("3.0.15.0")]
+[assembly: AssemblyVersion("3.0.16.0")]
+[assembly: AssemblyFileVersion("3.0.16.0")]
 
 namespace NetOptimizerV2
 {
@@ -26,6 +26,7 @@ namespace NetOptimizerV2
         {
             bool startupLaunch = HasArgument(args, "--startup");
             bool autoStartMonitoring = HasArgument(args, "--auto-start");
+            bool restartAsAdministrator = HasArgument(args, "--restart-as-admin");
             string elevatedStartupAction = ParseArgumentValue(args, "--elevated-startup=");
             if (!string.IsNullOrWhiteSpace(elevatedStartupAction))
             {
@@ -69,7 +70,7 @@ namespace NetOptimizerV2
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine("NetOptimizer failover simulation: FAIL");
-                    Console.Error.WriteLine(ex.Message);
+                    Console.Error.WriteLine(ex.ToString());
                     Environment.ExitCode = 1;
                 }
                 return;
@@ -103,7 +104,7 @@ namespace NetOptimizerV2
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine("NetOptimizer update checker test: FAIL");
-                    Console.Error.WriteLine(ex.Message);
+                    Console.Error.WriteLine(ex.ToString());
                     Environment.ExitCode = 1;
                 }
                 return;
@@ -149,7 +150,7 @@ namespace NetOptimizerV2
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine("NetOptimizer UI layout test: FAIL");
-                    Console.Error.WriteLine(ex.Message);
+                    Console.Error.WriteLine(ex.ToString());
                     Environment.ExitCode = 1;
                 }
                 return;
@@ -169,7 +170,7 @@ namespace NetOptimizerV2
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine("NetOptimizer GUI startup test: FAIL");
-                    Console.Error.WriteLine(ex.Message);
+                    Console.Error.WriteLine(ex.ToString());
                     Environment.ExitCode = 1;
                 }
                 return;
@@ -178,6 +179,11 @@ namespace NetOptimizerV2
             if (!string.IsNullOrWhiteSpace(uiSnapshotPath))
             {
                 string snapshotLanguage = ParseArgumentValue(args, "--snapshot-language=");
+                string snapshotNetwork = ParseArgumentValue(args, "--snapshot-network=");
+                bool snapshotLog = args != null && args.Any(delegate(string arg)
+                {
+                    return string.Equals(arg, "--snapshot-log", StringComparison.OrdinalIgnoreCase);
+                });
                 AppLanguage language = string.Equals(snapshotLanguage, "en", StringComparison.OrdinalIgnoreCase) ||
                                        string.Equals(snapshotLanguage, "english", StringComparison.OrdinalIgnoreCase)
                     ? AppLanguage.English
@@ -186,13 +192,13 @@ namespace NetOptimizerV2
                 Application.SetCompatibleTextRenderingDefault(false);
                 try
                 {
-                    MainForm.SaveUiSnapshot(uiSnapshotPath, language);
+                    MainForm.SaveUiSnapshot(uiSnapshotPath, language, snapshotNetwork, snapshotLog);
                     Environment.ExitCode = 0;
                 }
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine("NetOptimizer UI snapshot: FAIL");
-                    Console.Error.WriteLine(ex.Message);
+                    Console.Error.WriteLine(ex.ToString());
                     Environment.ExitCode = 1;
                 }
                 return;
@@ -226,11 +232,24 @@ namespace NetOptimizerV2
             try
             {
                 bool acquired;
-                using (SingleInstanceLock singleInstance = SingleInstanceLock.TryAcquire(out acquired))
+                TimeSpan instanceLockTimeout = restartAsAdministrator
+                    ? TimeSpan.FromSeconds(30)
+                    : TimeSpan.Zero;
+                using (SingleInstanceLock singleInstance = SingleInstanceLock.TryAcquire(
+                           instanceLockTimeout,
+                           out acquired))
                 {
                     if (!acquired)
                     {
-                        if (!startupLaunch)
+                        if (restartAsAdministrator)
+                        {
+                            MessageBox.Show(
+                                "原 NetOptimizer 尚未完成關閉，管理員重新啟動未完成。\n\n請稍後再試。",
+                                "NetOptimizer",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Warning);
+                        }
+                        else if (!startupLaunch)
                         {
                             MessageBox.Show("NetOptimizer 已經在執行中。請從系統匣開啟現有視窗。",
                                             "NetOptimizer", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -383,6 +402,7 @@ namespace NetOptimizerV2
             {
                 MonitorSettings settings = MonitorSettings.CreateDefault();
                 settings.Normalize();
+                SingleInstanceLock.RunSelfTest();
                 if (settings.Targets.Count != 2 || settings.FastIntervalMs != 500 ||
                     settings.SlowIntervalMs != 1000 || settings.FailoverEnabled ||
                     settings.FailoverThresholdMs != 200 || settings.FailoverBadSamples != 2 ||
@@ -506,6 +526,55 @@ namespace NetOptimizerV2
                 }
 
                 FailoverSimulation.Run();
+
+                InterfaceSnapshot readyPrimary = new InterfaceSnapshot
+                {
+                    Name = "A",
+                    Status = System.Net.NetworkInformation.OperationalStatus.Up,
+                    IPv4 = "192.0.2.10",
+                    Gateway = "192.0.2.1"
+                };
+                InterfaceSnapshot readyBackup = new InterfaceSnapshot
+                {
+                    Name = "B",
+                    Status = System.Net.NetworkInformation.OperationalStatus.Up,
+                    IPv4 = "198.51.100.10",
+                    Gateway = "198.51.100.1"
+                };
+                InterfaceSnapshot downBackup = new InterfaceSnapshot
+                {
+                    Name = "B",
+                    Status = System.Net.NetworkInformation.OperationalStatus.Down,
+                    IPv4 = "198.51.100.10",
+                    Gateway = "198.51.100.1"
+                };
+                if (!FailoverManager.IsReadyPair(readyPrimary, readyBackup) ||
+                    FailoverManager.IsReadyPair(readyPrimary, downBackup) ||
+                    !FailoverManager.IsReadySwitchCandidate(readyBackup, downBackup) ||
+                    FailoverManager.IsReadySwitchCandidate(downBackup, readyPrimary) ||
+                    FailoverManager.IsReadySwitchCandidate(readyBackup, null))
+                {
+                    throw new InvalidOperationException("A/B readiness guard validation failed.");
+                }
+                Console.WriteLine("NetOptimizer A/B readiness guard test: PASS");
+
+                DefaultRouteState expectedRoute = new DefaultRouteState
+                {
+                    InterfaceName = "A",
+                    RouteMetric = 0,
+                    InterfaceMetric = 5
+                };
+                DefaultRouteState unreadableRoute = new DefaultRouteState
+                {
+                    Error = "route unavailable"
+                };
+                if (!FailoverManager.IsExpectedRoute(expectedRoute, "A") ||
+                    FailoverManager.IsExpectedRoute(expectedRoute, "B") ||
+                    FailoverManager.IsExpectedRoute(unreadableRoute, "A"))
+                {
+                    throw new InvalidOperationException("Default route verification guard validation failed.");
+                }
+                Console.WriteLine("NetOptimizer route verification guard test: PASS");
 
                 MonitorSettings localSmoke = MonitorSettings.CreateDefault();
                 localSmoke.InterfaceName = "Loopback";

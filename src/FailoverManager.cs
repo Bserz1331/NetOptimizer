@@ -138,6 +138,14 @@ namespace NetOptimizerV2
             if (primarySnapshot == null || backupSnapshot == null)
             {
                 Write("A/B 切換未啟動：找不到指定的 A 或 B 網卡。", true);
+                PublishNotReadyStatus(settings, "找不到指定的 A 或 B 網卡。");
+                return;
+            }
+            if (!IsReadyPair(primarySnapshot, backupSnapshot))
+            {
+                string detail = DescribePairReadiness(primarySnapshot, backupSnapshot);
+                Write("A/B 切換未啟動：A 與 B 必須都是 IsReady（" + detail + "）。", true);
+                PublishNotReadyStatus(settings, "A 與 B 必須都是 IsReady；" + detail);
                 return;
             }
 
@@ -155,6 +163,16 @@ namespace NetOptimizerV2
             {
                 Write("A/B 切換未啟動：無法讀取 B 的 InterfaceMetric（" +
                       (backupState == null ? "沒有結果" : backupState.Error) + "）。", true);
+                return;
+            }
+
+            primarySnapshot = NetworkInfo.GetInterfaceSnapshot(primaryName);
+            backupSnapshot = NetworkInfo.GetInterfaceSnapshot(backupName);
+            if (!IsReadyPair(primarySnapshot, backupSnapshot))
+            {
+                string detail = DescribePairReadiness(primarySnapshot, backupSnapshot);
+                Write("A/B 切換未啟動：讀取 metric 後發現 A/B 已不再就緒（" + detail + "）。", true);
+                PublishNotReadyStatus(settings, "讀取 metric 後 A/B 已不再同時就緒；" + detail);
                 return;
             }
 
@@ -203,6 +221,8 @@ namespace NetOptimizerV2
                     primaryName,
                     backupName,
                     settings,
+                    primaryState,
+                    backupState,
                     token).ConfigureAwait(false);
                 if (ready)
                 {
@@ -557,6 +577,8 @@ namespace NetOptimizerV2
             string primary,
             string backup,
             MonitorSettings settings,
+            InterfaceMetricState originalPrimary,
+            InterfaceMetricState originalBackup,
             CancellationToken token)
         {
             bool entered = false;
@@ -569,6 +591,16 @@ namespace NetOptimizerV2
                     return false;
                 }
 
+                InterfaceSnapshot primarySnapshot = NetworkInfo.GetInterfaceSnapshot(primary);
+                InterfaceSnapshot backupSnapshot = NetworkInfo.GetInterfaceSnapshot(backup);
+                if (!IsReadyPair(primarySnapshot, backupSnapshot))
+                {
+                    string detail = DescribePairReadiness(primarySnapshot, backupSnapshot);
+                    Write("A/B 初始化取消：套用 metric 前 A/B 已不再同時就緒（" +
+                          detail + "）。", true);
+                    return false;
+                }
+
                 CommandResult primaryResult = await NetworkInfo.SetInterfaceMetricAsync(
                     primary, settings.FailoverPrimaryMetric, false, token).ConfigureAwait(false);
                 if (!await ReportAndVerifyMetricAsync(
@@ -578,7 +610,7 @@ namespace NetOptimizerV2
                     primaryResult,
                     token).ConfigureAwait(false))
                 {
-                    await RollbackManagedPairAsync(primary, backup, settings).ConfigureAwait(false);
+                    await RollbackOriginalPairAsync(originalPrimary, originalBackup).ConfigureAwait(false);
                     return false;
                 }
 
@@ -591,14 +623,14 @@ namespace NetOptimizerV2
                     backupResult,
                     token).ConfigureAwait(false))
                 {
-                    await RollbackManagedPairAsync(primary, backup, settings).ConfigureAwait(false);
+                    await RollbackOriginalPairAsync(originalPrimary, originalBackup).ConfigureAwait(false);
                     return false;
                 }
 
                 bool routeOk = await ReportRouteVerificationAsync(primary, token).ConfigureAwait(false);
                 if (!routeOk)
                 {
-                    await RollbackManagedPairAsync(primary, backup, settings).ConfigureAwait(false);
+                    await RollbackOriginalPairAsync(originalPrimary, originalBackup).ConfigureAwait(false);
                 }
                 return routeOk;
             }
@@ -624,6 +656,17 @@ namespace NetOptimizerV2
                 if (!entered)
                 {
                     Write("A/B 切換略過：另一個網路動作正在執行。", true);
+                    return false;
+                }
+
+                InterfaceSnapshot candidateSnapshot = NetworkInfo.GetInterfaceSnapshot(newPrimary);
+                InterfaceSnapshot existingSnapshot = NetworkInfo.GetInterfaceSnapshot(newBackup);
+                if (!IsReadySwitchCandidate(candidateSnapshot, existingSnapshot))
+                {
+                    string detail = candidateSnapshot == null || !candidateSnapshot.IsReady
+                        ? "候選主線尚未就緒"
+                        : "原主線介面已不存在";
+                    Write("A/B 切換取消：" + detail + "，不會改動 metric。", true);
                     return false;
                 }
 
@@ -725,6 +768,23 @@ namespace NetOptimizerV2
             }
         }
 
+        private async Task<bool> RollbackOriginalPairAsync(
+            InterfaceMetricState originalPrimary,
+            InterfaceMetricState originalBackup)
+        {
+            bool primaryOk = await RestoreMetricAsync(originalPrimary).ConfigureAwait(false);
+            bool backupOk = await RestoreMetricAsync(originalBackup).ConfigureAwait(false);
+            if (primaryOk && backupOk)
+            {
+                Write("A/B 初始套用失敗，已依原始 metric 完成 rollback。", false);
+            }
+            else
+            {
+                Write("A/B 初始套用失敗，原始 metric 尚未全部復原。", true);
+            }
+            return primaryOk && backupOk;
+        }
+
         private async Task<bool> ReportRouteVerificationAsync(
             string expectedInterface,
             CancellationToken token)
@@ -734,10 +794,10 @@ namespace NetOptimizerV2
             if (route == null || !string.IsNullOrWhiteSpace(route.Error))
             {
                 Write("路由驗證無法完成：" + (route == null ? "沒有結果" : route.Error) +
-                      "；metric 已驗證，但請留意其他 VPN 或自訂 route。", true);
-                return true;
+                      "；為避免誤判，A/B 不會視為已就緒。", true);
+                return false;
             }
-            if (!string.Equals(route.InterfaceName, expectedInterface, StringComparison.OrdinalIgnoreCase))
+            if (!IsExpectedRoute(route, expectedInterface))
             {
                 Write("路由驗證失敗：目前最低預設 route 是「" + route.InterfaceName +
                       "」，不是預期的「" + expectedInterface + "」。", true);
@@ -809,9 +869,11 @@ namespace NetOptimizerV2
             LinkHealth active,
             LinkHealth standby)
         {
+            InterfaceSnapshot standbySnapshot =
+                NetworkInfo.GetInterfaceSnapshot(policy.StandbyInterface);
             return new FailoverStatus
             {
-                Ready = true,
+                Ready = standbySnapshot != null && standbySnapshot.IsReady,
                 InFailover = policy.InFailover,
                 SmartSelection = settings.SmartSelectionEnabled,
                 ActiveInterface = policy.ActiveInterface,
@@ -867,6 +929,61 @@ namespace NetOptimizerV2
         private static bool MetricStateIsUsable(InterfaceMetricState state)
         {
             return state != null && string.IsNullOrWhiteSpace(state.Error) && state.Metric > 0;
+        }
+
+        internal static bool IsReadyPair(InterfaceSnapshot primary, InterfaceSnapshot backup)
+        {
+            return primary != null && backup != null &&
+                   !string.Equals(primary.Name, backup.Name, StringComparison.OrdinalIgnoreCase) &&
+                   primary.IsReady && backup.IsReady;
+        }
+
+        internal static bool IsReadySwitchCandidate(
+            InterfaceSnapshot candidate,
+            InterfaceSnapshot existing)
+        {
+            return candidate != null && candidate.IsReady && existing != null;
+        }
+
+        internal static bool IsExpectedRoute(
+            DefaultRouteState route,
+            string expectedInterface)
+        {
+            return route != null && string.IsNullOrWhiteSpace(route.Error) &&
+                   !string.IsNullOrWhiteSpace(expectedInterface) &&
+                   string.Equals(route.InterfaceName, expectedInterface,
+                                 StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string DescribePairReadiness(
+            InterfaceSnapshot primary,
+            InterfaceSnapshot backup)
+        {
+            return DescribeInterfaceReadiness("A", primary) + "；" +
+                   DescribeInterfaceReadiness("B", backup);
+        }
+
+        private static string DescribeInterfaceReadiness(
+            string role,
+            InterfaceSnapshot snapshot)
+        {
+            if (snapshot == null) { return role + " 不存在"; }
+            if (snapshot.IsReady) { return role + " 已就緒"; }
+            return role + " 未就緒（狀態=" + snapshot.Status +
+                   "，IPv4=" + (string.IsNullOrWhiteSpace(snapshot.IPv4) ? "無" : "有") +
+                   "，gateway=" + (string.IsNullOrWhiteSpace(snapshot.Gateway) ? "無" : "有") + "）";
+        }
+
+        private void PublishNotReadyStatus(
+            MonitorSettings settings,
+            string detail)
+        {
+            PublishStatus(new FailoverStatus
+            {
+                Ready = false,
+                SmartSelection = settings != null && settings.SmartSelectionEnabled,
+                Detail = detail
+            });
         }
 
         private static bool IsOriginalState(InterfaceMetricState current, MetricRecoveryEntry original)

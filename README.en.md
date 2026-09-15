@@ -6,9 +6,9 @@ NetOptimizer is a portable Windows x64 network monitor with A/B failover and opt
 
 ## Download
 
-Download the latest stable build from [NetOptimizer v3.0.15](https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.15).
+Download the latest stable build from [NetOptimizer v3.0.16](https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.16).
 
-For most users, download `NetOptimizer-v3.0.15-win-x64.zip`, extract it, and run `NetOptimizer-v3.0.15.exe`. No installer is required. The standalone EXE and SHA256 checksum file are also available in the release assets.
+For most users, download `NetOptimizer-v3.0.16-win-x64.zip`, extract it, and run `NetOptimizer-v3.0.16.exe`. No installer is required. The standalone EXE and SHA256 checksum file are also available in the release assets.
 
 ## Quick start
 
@@ -18,7 +18,7 @@ For most users, download `NetOptimizer-v3.0.15-win-x64.zip`, extract it, and run
 4. Optionally enable `Start with Windows` in the permission bar.
 5. Click `Start protection`.
 
-Use `Beginner mode` for the common workflow. Advanced monitoring, A/B, EWMA, and diagnostic settings remain available when needed.
+Use the compact quick-start screen for the common workflow. Click the gear icon to open the separate Advanced settings window when monitoring, A/B, EWMA, or diagnostic options are needed.
 
 ## Features
 
@@ -31,8 +31,9 @@ Use `Beginner mode` for the common workflow. Advanced monitoring, A/B, EWMA, and
 - Safe interface discovery: automatic selection uses only interfaces with IPv4 and a default gateway (`IsReady`); `NotPresent` interfaces are excluded from the lists.
 - Failover safety: when no second ready backup interface is detected, the backup remains empty and automatic switching is disabled until a ready backup is selected.
 - Non-administrator A/B startup is blocked with an explicit “Restart as administrator” action.
-- Beginner mode for the common workflow and an advanced mode for monitoring, failover, EWMA, and diagnostics settings.
+- Compact quick-start workflow for common use, with monitoring, failover, EWMA, and diagnostics settings in a separate Advanced settings window.
 - System-tray operation, bounded activity logs, diagnostic export, and a support dialog.
+- Embedded scalable SVG icon resources for network types, status, actions, language, support, and elevation controls; the EXE remains self-contained and keeps a drawing fallback if a resource is unavailable.
 - Optional `Start with Windows` registration, disabled by default. When the executable is installed under `C:\Program Files` or `C:\Program Files (x86)`, enabling it requests UAC once and creates a highest-privilege Task Scheduler logon task; after sign-in it starts monitoring and minimizes to the system tray. Portable copies outside Program Files use the current user's `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, start minimized, and do not elevate automatically. Do not configure an elevated task for a user-writable folder.
 - Traditional Chinese / English UI selection in the upper-right corner. On first start, or when the settings file cannot be used, any Windows `zh-*` culture defaults to Traditional Chinese and all other cultures default to English. Existing settings and manual choices are preserved. The preference is stored in `%LOCALAPPDATA%\NetOptimizer\settings.xml` and applies to the main window, tray menu, and support dialog.
 - Background update check against the latest stable GitHub Release, with a 24-hour success-check interval. A new version appears in the header and system tray; opening it goes to the official Release page. Update checks do not affect monitoring and never download, execute, or replace the program automatically. Check metadata is stored separately in `%LOCALAPPDATA%\NetOptimizer\update-state.xml`.
@@ -56,7 +57,7 @@ Start with Windows has two deliberate modes. A protected Program Files installat
 From Windows PowerShell:
 
 ```powershell
-.\build.ps1 -Version 3.0.15 -OutputDirectory .\dist
+.\build.ps1 -Version 3.0.16 -OutputDirectory .\dist
 ```
 
 The build uses the .NET Framework compiler and Windows SDK resources available on the machine. Code signing is optional; without a certificate the build reports that signing was skipped.
@@ -69,15 +70,15 @@ Maintainers can run the deterministic checks below from the repository root:
 <summary>Show validation commands</summary>
 
 ```powershell
-.\dist\NetOptimizer-v3.0.15.exe --self-test
-.\dist\NetOptimizer-v3.0.15.exe --failover-simulation
-.\dist\NetOptimizer-v3.0.15.exe --interface-probe-test
-.\dist\NetOptimizer-v3.0.15.exe --diagnostics-test
-.\dist\NetOptimizer-v3.0.15.exe --ui-layout-test
-.\dist\NetOptimizer-v3.0.15.exe --gui-startup-test
-.\dist\NetOptimizer-v3.0.15.exe --update-check-test
-.\dist\NetOptimizer-v3.0.15.exe --update-check-live-test
-.\dist\NetOptimizer-v3.0.15.exe --soak-test --seconds=60
+.\dist\NetOptimizer-v3.0.16.exe --self-test
+.\dist\NetOptimizer-v3.0.16.exe --failover-simulation
+.\dist\NetOptimizer-v3.0.16.exe --interface-probe-test
+.\dist\NetOptimizer-v3.0.16.exe --diagnostics-test
+.\dist\NetOptimizer-v3.0.16.exe --ui-layout-test
+.\dist\NetOptimizer-v3.0.16.exe --gui-startup-test
+.\dist\NetOptimizer-v3.0.16.exe --update-check-test
+.\dist\NetOptimizer-v3.0.16.exe --update-check-live-test
+.\dist\NetOptimizer-v3.0.16.exe --soak-test --seconds=60
 ```
 
 `--interface-probe-test` is read-only: it probes using each available interface's source IPv4 and does not change routes, metrics, DNS, or MTU. The metric test, when used, must run as administrator and is expected to be refused in a standard-user shell. Real A/B route switching should be tested as an administrator in an environment where a brief connection transition is acceptable.

@@ -57,6 +57,12 @@ namespace NetOptimizerV2
                 });
             }
 
+            RaiseFailoverStatus(new FailoverStatus
+            {
+                Ready = false,
+                SmartSelection = settings.SmartSelectionEnabled,
+                Detail = "A/B 尚未就緒。"
+            });
             RaiseLog("監測已啟動。", false);
         }
 
@@ -152,6 +158,12 @@ namespace NetOptimizerV2
             finally
             {
                 RaiseLog("監測已停止。", false);
+                RaiseFailoverStatus(new FailoverStatus
+                {
+                    Ready = false,
+                    SmartSelection = settings.SmartSelectionEnabled,
+                    Detail = "A/B 監測已停止。"
+                });
             }
         }
 
@@ -161,7 +173,7 @@ namespace NetOptimizerV2
             int goodCount = 0;
             int badStreak = 0;
             int intervalMs = settings.FastIntervalMs;
-            DateTime lastRefreshUtc = DateTime.MinValue;
+            DateTime lastRefreshAttemptUtc = DateTime.MinValue;
             bool cooldownLogged = false;
 
             try
@@ -206,17 +218,26 @@ namespace NetOptimizerV2
                                     cooldownLogged = true;
                                 }
                             }
-                            else if (DateTime.UtcNow - lastRefreshUtc >=
+                            else if (DateTime.UtcNow - lastRefreshAttemptUtc >=
                                      TimeSpan.FromSeconds(settings.CooldownSeconds))
                             {
-                                await RefreshWithGateAsync(settings, token, false).ConfigureAwait(false);
-                                lastRefreshUtc = DateTime.UtcNow;
-                                badStreak = 0;
-                                cooldownLogged = false;
+                                lastRefreshAttemptUtc = DateTime.UtcNow;
+                                bool refreshed = await RefreshWithGateAsync(
+                                    settings, token, false).ConfigureAwait(false);
+                                if (refreshed)
+                                {
+                                    badStreak = 0;
+                                    cooldownLogged = false;
+                                }
+                                else if (!cooldownLogged)
+                                {
+                                    RaiseLog("刷新未完成，保留異常計數，稍後再試。", true);
+                                    cooldownLogged = true;
+                                }
                             }
                             else if (!cooldownLogged)
                             {
-                                TimeSpan elapsed = DateTime.UtcNow - lastRefreshUtc;
+                                TimeSpan elapsed = DateTime.UtcNow - lastRefreshAttemptUtc;
                                 double remaining = Math.Max(0, settings.CooldownSeconds - elapsed.TotalSeconds);
                                 RaiseLog("偵測到異常，但仍在刷新冷卻時間內，剩餘約 " +
                                          Math.Ceiling(remaining) + " 秒。", true);
@@ -252,7 +273,7 @@ namespace NetOptimizerV2
                 null, target, port, timeoutMs, token).ConfigureAwait(false);
         }
 
-        private async Task RefreshWithGateAsync(
+        private async Task<bool> RefreshWithGateAsync(
             MonitorSettings settings,
             CancellationToken token,
             bool manual)
@@ -261,7 +282,7 @@ namespace NetOptimizerV2
                 Thread.VolatileRead(ref failoverReady) == 1)
             {
                 RaiseLog("A/B 監測已就緒，暫停一般自動刷新，避免與故障切換互相干擾。", true);
-                return;
+                return false;
             }
 
             bool entered = false;
@@ -271,19 +292,21 @@ namespace NetOptimizerV2
                 if (!entered)
                 {
                     RaiseLog("已有刷新動作執行中，略過重複請求。", true);
-                    return;
+                    return false;
                 }
 
                 RaiseLog(manual ? "開始手動刷新。" : "達到異常門檻，開始刷新。", false);
-                await SoftRefreshAsync(settings, token).ConfigureAwait(false);
+                return await SoftRefreshAsync(settings, token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
                 RaiseLog("刷新動作已取消。", true);
+                return false;
             }
             catch (Exception ex)
             {
                 RaiseLog("刷新動作發生錯誤：" + ex.Message, true);
+                return false;
             }
             finally
             {
@@ -294,8 +317,9 @@ namespace NetOptimizerV2
             }
         }
 
-        private async Task SoftRefreshAsync(MonitorSettings settings, CancellationToken token)
+        private async Task<bool> SoftRefreshAsync(MonitorSettings settings, CancellationToken token)
         {
+            bool success = true;
             if (!NetworkInfo.IsAdministrator())
             {
                 RaiseLog("目前不是系統管理員；ARP 與 MTU 動作可能被 Windows 拒絕。", true);
@@ -305,33 +329,35 @@ namespace NetOptimizerV2
             {
                 CommandResult result = await CommandRunner.RunAsync(
                     "ipconfig.exe", new[] { "/flushdns" }, 5000, token).ConfigureAwait(false);
-                ReportCommand("DNS cache", result);
+                bool commandOk = ReportCommand("DNS cache", result);
+                success = commandOk && success;
             }
 
             if (settings.ClearArp)
             {
                 CommandResult result = await CommandRunner.RunAsync(
                     "arp.exe", new[] { "-d", "*" }, 5000, token).ConfigureAwait(false);
-                ReportCommand("ARP cache", result);
+                bool commandOk = ReportCommand("ARP cache", result);
+                success = commandOk && success;
             }
 
             if (!settings.PulseMtu)
             {
                 RaiseLog("MTU 刷新已停用。", false);
-                return;
+                return success;
             }
 
             int originalMtu = NetworkInfo.TryGetMtu(settings.InterfaceName);
             if (originalMtu <= 0)
             {
                 RaiseLog("找不到網卡「" + settings.InterfaceName + "」的 IPv4 MTU，略過 MTU 刷新。", true);
-                return;
+                return false;
             }
             if (originalMtu <= settings.MtuPulseValue)
             {
                 RaiseLog("目前 MTU 為 " + originalMtu + "，不會把它提高到 " +
                          settings.MtuPulseValue + "；略過 MTU 刷新。", false);
-                return;
+                return success;
             }
 
             CommandResult pulse = await CommandRunner.RunAsync(
@@ -343,10 +369,11 @@ namespace NetOptimizerV2
                 },
                 5000,
                 token).ConfigureAwait(false);
-            ReportCommand("MTU pulse -> " + settings.MtuPulseValue, pulse);
-            if (!pulse.Succeeded)
+            bool pulseOk = ReportCommand("MTU pulse -> " + settings.MtuPulseValue, pulse);
+            success = pulseOk && success;
+            if (!pulseOk)
             {
-                return;
+                return false;
             }
 
             try
@@ -356,6 +383,7 @@ namespace NetOptimizerV2
             catch (OperationCanceledException)
             {
                 RaiseLog("MTU pulse 等待被取消，仍會先嘗試復原原始值。", true);
+                success = false;
             }
 
             CommandResult restore = await CommandRunner.RunAsync(
@@ -367,36 +395,38 @@ namespace NetOptimizerV2
                 },
                 5000,
                 CancellationToken.None).ConfigureAwait(false);
-            ReportCommand("MTU restore -> " + originalMtu, restore);
+            bool restoreOk = ReportCommand("MTU restore -> " + originalMtu, restore);
+            return restoreOk && success;
         }
 
-        private void ReportCommand(string name, CommandResult result)
+        private bool ReportCommand(string name, CommandResult result)
         {
             if (result == null)
             {
                 RaiseLog(name + "：沒有收到結果。", true);
-                return;
+                return false;
             }
             if (result.Succeeded)
             {
                 RaiseLog(name + "：成功。", false);
-                return;
+                return true;
             }
             if (result.Cancelled)
             {
                 RaiseLog(name + "：已取消。", true);
-                return;
+                return false;
             }
             if (result.TimedOut)
             {
                 RaiseLog(name + "：timeout，程序已終止。", true);
-                return;
+                return false;
             }
 
             string detail = CommandRunner.GetUsefulError(result.StandardError);
             if (detail.Length == 0) { detail = CommandRunner.GetUsefulError(result.StandardOutput); }
             if (detail.Length == 0) { detail = "exit code " + result.ExitCode; }
             RaiseLog(name + "：失敗（" + detail + "）。", true);
+            return false;
         }
 
         private void RaiseLog(string message, bool warning)

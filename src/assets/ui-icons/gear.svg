@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Symmetric 8-tooth outline centered on (32, 32). -->
+  <path d="M24.92 14.908
+           L26.514 9.149 L37.486 9.149 L39.08 14.908
+           L44.279 11.963 L52.037 19.721 L49.092 24.92
+           L54.851 26.514 L54.851 37.486 L49.092 39.08
+           L52.037 44.279 L44.279 52.037 L39.08 49.092
+           L37.486 54.851 L26.514 54.851 L24.92 49.092
+           L19.721 52.037 L11.963 44.279 L14.908 39.08
+           L9.149 37.486 L9.149 26.514 L14.908 24.92
+           L11.963 19.721 L19.721 11.963 Z"
+        stroke="#EAF4FA" stroke-width="4.2" stroke-linejoin="round"/>
+  <circle cx="32" cy="32" r="8" stroke="#EAF4FA" stroke-width="4"/>
+</svg>

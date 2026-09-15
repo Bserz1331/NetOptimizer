@@ -1,5 +1,6 @@
 # Local build and verification output
 /build/
+/src/build/
 /src/dist/
 
 # Release files are attached to GitHub Releases instead of committed to source

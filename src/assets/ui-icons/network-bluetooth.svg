@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Original NetOptimizer redraw: a balanced, rounded Bluetooth geometry. -->
+  <g stroke="#3CAAFF" stroke-width="5.5" stroke-linecap="round"
+     stroke-linejoin="round">
+    <!-- spine -->
+    <path d="M32 6V58"/>
+    <!-- paired right-facing links -->
+    <path d="M32 6L49 19L32 32L49 45L32 58"/>
+    <!-- 180-degree-turned left links: the apex stays on the spine. -->
+    <path d="M15 19L32 32L15 45"/>
+  </g>
+</svg>

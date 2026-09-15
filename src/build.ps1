@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "3.0.15",
+    [string]$Version = "3.0.16",
     [string]$OutputDirectory = "",
     [string]$SigningCertificateThumbprint = "",
     [string]$TimestampUrl = ""
@@ -34,13 +34,42 @@ if (-not $rc) {
     throw "Windows SDK resource compiler rc.exe not found."
 }
 
+$versionParts = @($Version.Split('.'))
+if ($versionParts.Count -gt 4) {
+    throw "Version must contain no more than four numeric components: $Version"
+}
+$resourceVersionParts = @($versionParts | ForEach-Object {
+    $component = 0
+    if (-not [int]::TryParse($_, [ref]$component) -or $component -lt 0 -or $component -gt 65535) {
+        throw "Version contains an invalid resource component: $Version"
+    }
+    $component
+})
+while ($resourceVersionParts.Count -lt 4) {
+    $resourceVersionParts += 0
+}
+$resourceVersion = $resourceVersionParts -join ","
+
 $resourcePath = Join-Path $buildDirectory "NetOptimizer.res"
+$resourceTemplatePath = Join-Path $root "NetOptimizer.rc"
+$generatedResourcePath = Join-Path $buildDirectory "NetOptimizer.generated.rc"
+$resourceText = Get-Content -LiteralPath $resourceTemplatePath -Raw
+$resourceText = [regex]::Replace(
+    $resourceText,
+    '(?m)^FILEVERSION[^\r\n]*',
+    "FILEVERSION $resourceVersion")
+$resourceText = [regex]::Replace(
+    $resourceText,
+    '(?m)^PRODUCTVERSION[^\r\n]*',
+    "PRODUCTVERSION $resourceVersion")
+Set-Content -LiteralPath $generatedResourcePath -Value $resourceText -Encoding Unicode
 Push-Location $root
 try {
-    & $rc /nologo /fo $resourcePath "NetOptimizer.rc"
+    & $rc /nologo /fo $resourcePath $generatedResourcePath
 }
 finally {
     Pop-Location
+    Remove-Item -LiteralPath $generatedResourcePath -Force -ErrorAction SilentlyContinue
 }
 if ($LASTEXITCODE -ne 0) { throw "rc.exe failed with exit code $LASTEXITCODE" }
 
@@ -56,6 +85,13 @@ $cscArgs = @(
 )
 foreach ($reference in @("System.dll", "System.Core.dll", "System.Drawing.dll", "System.Runtime.Serialization.dll", "System.Windows.Forms.dll", "System.Xml.dll")) {
     $cscArgs += "/reference:$([IO.Path]::Combine((Split-Path $compiler), $reference))"
+}
+$iconDirectory = Join-Path $root "assets\ui-icons"
+if (Test-Path -LiteralPath $iconDirectory) {
+    foreach ($asset in (Get-ChildItem -LiteralPath $iconDirectory -Filter "*.svg" -File | Sort-Object Name)) {
+        $resourceName = "NetOptimizerV2.UiIcons." + $asset.BaseName
+        $cscArgs += "/resource:$($asset.FullName),$resourceName"
+    }
 }
 $cscArgs += Get-ChildItem -LiteralPath $root -Filter "*.cs" | Sort-Object Name | ForEach-Object { $_.FullName }
 & $compiler @cscArgs

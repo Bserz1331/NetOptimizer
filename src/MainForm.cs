@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.ComponentModel;
 using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -14,12 +16,20 @@ namespace NetOptimizerV2
 {
     internal sealed class MainForm : Form
     {
-        private static readonly Color Background = Color.FromArgb(20, 21, 23);
-        private static readonly Color PanelBackground = Color.FromArgb(27, 29, 33);
-        private static readonly Color TextColor = Color.FromArgb(238, 240, 242);
-        private static readonly Color MutedText = Color.FromArgb(164, 169, 178);
-        private static readonly Color Accent = Color.FromArgb(79, 214, 163);
-        private static readonly Color Warning = Color.FromArgb(238, 181, 43);
+        private static readonly Color Background = Color.FromArgb(10, 20, 28);
+        private static readonly Color PanelBackground = Color.FromArgb(16, 29, 38);
+        private static readonly Color TextColor = Color.FromArgb(241, 244, 247);
+        private static readonly Color MutedText = Color.FromArgb(158, 177, 193);
+        private static readonly Color Accent = Color.FromArgb(20, 224, 205);
+        private static readonly Color Warning = Color.FromArgb(255, 199, 42);
+        private static readonly Color Error = Color.FromArgb(244, 91, 105);
+        private static readonly Color DisabledGlyph = Color.FromArgb(83, 104, 116);
+        private const int BeginnerPanelBaseHeight = 305;
+        private const int BeginnerDashboardBaseHeight = 255;
+        private const int BeginnerInlineLogHeight = 190;
+        private const int BeginnerInlineLogRowHeight = 198;
+        private const int HeaderRowHeight = 56;
+        private const int HeaderBottomMargin = 2;
 
         private readonly MonitorEngine engine = new MonitorEngine();
         private readonly Queue<string> visibleLog = new Queue<string>();
@@ -72,6 +82,14 @@ namespace NetOptimizerV2
         private Label beginnerPrimaryHealthValue;
         private Label beginnerBackupValue;
         private Label beginnerBackupHealthValue;
+        private SignalGlyph beginnerPrimarySignal;
+        private SignalGlyph beginnerBackupSignal;
+        private ModernCard beginnerPrimaryCard;
+        private ModernCard beginnerBackupCard;
+        private NetworkGlyph beginnerPrimaryGlyph;
+        private NetworkGlyph beginnerBackupGlyph;
+        private StatePill beginnerPrimaryStatePill;
+        private StatePill beginnerBackupStatePill;
         private RichTextBox logBox;
         private Label logEmptyLabel;
         private PictureBox brandImage;
@@ -101,13 +119,27 @@ namespace NetOptimizerV2
         private TableLayoutPanel permissionPanel;
         private GroupBox logGroup;
         private TableLayoutPanel layoutRoot;
+        private TableLayoutPanel mainLayout;
         private TableLayoutPanel layoutShell;
         private Panel contentViewport;
         private TableLayoutPanel headerLayout;
         private TableLayoutPanel headerStatusLayout;
+        private TableLayoutPanel headerActionsLayout;
+        private TableLayoutPanel headerInfoLayout;
+        private TableLayoutPanel customTitleBar;
+        private Button chromeMinimizeButton;
+        private Button chromeMaximizeButton;
+        private Button chromeCloseButton;
         private TableLayoutPanel footerLayout;
+        private FlowLayoutPanel footerActionFlow;
         private FlowLayoutPanel permissionActions;
         private TableLayoutPanel beginnerDashboard;
+        private Panel advancedDrawer;
+        private Panel advancedDrawerBody;
+        private TableLayoutPanel advancedDrawerLayout;
+        private Label advancedDrawerTitle;
+        private Button advancedDrawerCloseButton;
+        private AdvancedSettingsDialog settingsDialog;
         private ContextMenuStrip logMenu;
         private ToolStripMenuItem followLogItem;
         private ToolTip uiToolTip;
@@ -125,12 +157,16 @@ namespace NetOptimizerV2
         private bool followLog = true;
         private bool advancedExpanded;
         private bool beginnerMode = true;
+        private bool advancedDrawerOpen;
+        private bool settingsDialogOpen;
         private bool beginnerLogExpanded;
         private bool restoringNetwork;
         private AppLanguage currentLanguage;
         private bool applyingLanguage;
         private bool applyingStartupPreference;
         private bool startupConfigurationInProgress;
+        private int windowHeightBeforeInlineLog;
+        private bool windowHeightExpandedForLog;
         private string lastProbeSummary = string.Empty;
         private bool hasProbeResult;
         private string lastProbeTarget = string.Empty;
@@ -151,6 +187,61 @@ namespace NetOptimizerV2
             public List<InterfaceSnapshot> Ready;
             public InterfaceSnapshot Primary;
             public InterfaceSnapshot Backup;
+        }
+
+        [DllImport("dwmapi.dll", EntryPoint = "DwmSetWindowAttribute")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int valueSize);
+
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            ApplyDarkTitleBar();
+            ApplyWindowShape();
+            ApplyResponsiveLayout();
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            ApplyDarkTitleBar();
+        }
+
+        private void ApplyDarkTitleBar()
+        {
+            try
+            {
+                int darkMode = 1;
+                DwmSetWindowAttribute(Handle, 20, ref darkMode, sizeof(int));
+                DwmSetWindowAttribute(Handle, 19, ref darkMode, sizeof(int));
+                int captionColor = 0x00141F29;
+                int captionTextColor = 0x00F1F4F7;
+                DwmSetWindowAttribute(Handle, 35, ref captionColor, sizeof(int));
+                DwmSetWindowAttribute(Handle, 36, ref captionTextColor, sizeof(int));
+            }
+            catch
+            {
+                // Dark title bars are a cosmetic enhancement and are not required
+                // for the monitor, tray, or failover functionality.
+            }
+        }
+
+        private void ApplyWindowShape()
+        {
+            if (ClientSize.Width <= 0 || ClientSize.Height <= 0) { return; }
+            using (GraphicsPath path = ModernDrawing.RoundedRectangle(
+                new Rectangle(0, 0, ClientSize.Width, ClientSize.Height), 12))
+            {
+                Region previous = Region;
+                Region next = new Region(path);
+                Region = next;
+                if (previous != null) { previous.Dispose(); }
+            }
         }
 
         public MainForm() : this(false, false)
@@ -230,14 +321,18 @@ namespace NetOptimizerV2
             BackColor = Background;
             ForeColor = TextColor;
             Font = new Font("Microsoft JhengHei UI", 9F, FontStyle.Regular);
-            FormBorderStyle = FormBorderStyle.Sizable;
-            MaximizeBox = true;
-            MinimizeBox = true;
-            ShowIcon = true;
+            FormBorderStyle = FormBorderStyle.None;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ShowIcon = false;
             ShowInTaskbar = true;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(900, 440);
-            MinimumSize = new Size(760, 420);
+            // The collapsed quick-start content needs roughly 460 logical
+            // pixels.  Keep a small breathing margin instead of making the
+            // shell reserve the former 500-pixel blank lower area, while
+            // leaving enough room for the footer without a vertical scrollbar.
+            ClientSize = new Size(1024, 480);
+            MinimumSize = new Size(760, 400);
             AutoScaleMode = AutoScaleMode.Dpi;
 
             uiToolTip = new ToolTip
@@ -250,7 +345,8 @@ namespace NetOptimizerV2
 
             layoutShell = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.None,
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 BackColor = Background,
                 ColumnCount = 1,
                 RowCount = 2
@@ -266,15 +362,15 @@ namespace NetOptimizerV2
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
                 BackColor = Background,
-                Padding = new Padding(12),
+                Padding = new Padding(10, 4, 10, 0),
                 Margin = new Padding(0)
             };
             layoutShell.Controls.Add(contentViewport, 0, 0);
 
             TableLayoutPanel mainLayout = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
-                AutoSize = false,
+                Dock = DockStyle.Top,
+                AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 BackColor = Background,
                 ColumnCount = 1,
@@ -282,9 +378,10 @@ namespace NetOptimizerV2
                 Margin = new Padding(0),
                 Padding = new Padding(0)
             };
+            this.mainLayout = mainLayout;
             layoutRoot = mainLayout;
             mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 88F));
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, HeaderRowHeight));
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -292,6 +389,7 @@ namespace NetOptimizerV2
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             contentViewport.Controls.Add(mainLayout);
+            BuildAdvancedDrawer();
 
             headerLayout = new TableLayoutPanel
             {
@@ -299,11 +397,15 @@ namespace NetOptimizerV2
                 BackColor = Background,
                 ColumnCount = 3,
                 RowCount = 1,
-                Margin = new Padding(0, 0, 0, 7)
+                Margin = new Padding(0, 0, 0, HeaderBottomMargin)
             };
             headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64F));
             headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 330F));
+            // Keep the status, mode switch, update notice, and language picker
+            // together as a compact right-hand control cluster. The previous
+            // flexible first action column made the mode button grow with the
+            // window and left the header visually unbalanced.
+            headerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 302F));
             headerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             brandImage = new PictureBox
@@ -317,7 +419,7 @@ namespace NetOptimizerV2
             LoadApplicationIcon();
             headerLayout.Controls.Add(brandImage, 0, 0);
 
-            titleLabel = LabelOf("NetOptimizer", 0, 0, 0, 0, 21F, TextColor, FontStyle.Bold);
+            titleLabel = LabelOf("NetOptimizer", 0, 0, 0, 0, 25F, TextColor, FontStyle.Bold);
             titleLabel.Dock = DockStyle.Fill;
             titleLabel.Margin = new Padding(4, 0, 0, 0);
             headerLayout.Controls.Add(titleLabel, 1, 0);
@@ -327,41 +429,89 @@ namespace NetOptimizerV2
                 Dock = DockStyle.Fill,
                 BackColor = Background,
                 ColumnCount = 1,
-                RowCount = 3,
+                RowCount = 2,
                 Margin = new Padding(0)
             };
             headerStatusLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            headerStatusLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
-            headerStatusLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
-            headerStatusLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+            headerStatusLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+            headerStatusLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
 
-            statusValue = LabelOf("狀態：未啟動", 0, 0, 0, 0, 11F, MutedText,
-                                 FontStyle.Bold, ContentAlignment.MiddleRight);
-            statusValue.Dock = DockStyle.Fill;
-            statusValue.AutoEllipsis = true;
+            statusValue = new StatusBadge
+            {
+                Text = "狀態：未啟動",
+                ForeColor = MutedText,
+                Font = new Font("Microsoft JhengHei UI", 9.5F, FontStyle.Bold),
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 0, 4, 0),
+                AutoEllipsis = true
+            };
+            Localization.Mark(statusValue, "狀態：未啟動");
             lastProbeValue = LabelOf("最近探測：尚未測試", 0, 0, 0, 0, 8.5F, MutedText,
-                                     FontStyle.Regular, ContentAlignment.MiddleRight);
+                                      FontStyle.Regular, ContentAlignment.MiddleRight);
             lastProbeValue.Dock = DockStyle.Fill;
             lastProbeValue.AutoEllipsis = true;
-            headerStatusLayout.Controls.Add(statusValue, 0, 0);
-            headerStatusLayout.Controls.Add(lastProbeValue, 0, 1);
             TableLayoutPanel headerActions = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 BackColor = Background,
                 ColumnCount = 3,
                 RowCount = 1,
-                Margin = new Padding(0, 2, 0, 0),
+                Margin = new Padding(0),
                 Padding = new Padding(0)
             };
-            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92F));
-            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108F));
-            modeButton = ButtonOf("進階設定 ▸", 0, 0, 128, 24, false);
+            headerActionsLayout = headerActions;
+            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210F));
+            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46F));
+            headerActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46F));
+            headerActions.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            headerActions.Controls.Add(statusValue, 0, 0);
+            modeButton = ButtonOf("顯示進階設定 ▸", 0, 0, 154, 30, false);
             modeButton.Dock = DockStyle.Fill;
-            modeButton.Margin = new Padding(0, 0, 4, 0);
-            modeButton.Click += delegate { ToggleUiMode(); };
-            headerActions.Controls.Add(modeButton, 0, 0);
+            modeButton.Margin = new Padding(0, 2, 4, 2);
+            ModernButton modernModeButton = modeButton as ModernButton;
+            if (modernModeButton != null)
+            {
+                modernModeButton.Glyph = "gear";
+                modernModeButton.IconOnly = true;
+            }
+            modeButton.AccessibleRole = AccessibleRole.PushButton;
+            modeButton.Click += delegate { OpenAdvancedSettingsDialog(); };
+            headerActions.Controls.Add(modeButton, 1, 0);
+            languageBox = new ModernComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(17, 18, 20),
+                ForeColor = TextColor,
+                Font = new Font("Microsoft JhengHei UI", 9F),
+                FlatStyle = FlatStyle.Flat,
+                Dock = DockStyle.Fill,
+                AutoSize = false,
+                DropDownWidth = 140,
+                Margin = new Padding(0, 2, 4, 2),
+                ShowGlobe = true,
+                IconOnly = true,
+                AccessibleRole = AccessibleRole.ComboBox,
+                AccessibleName = "選擇介面語言。"
+            };
+            languageBox.Items.Add(Localization.LanguageName(AppLanguage.TraditionalChinese));
+            languageBox.Items.Add(Localization.LanguageName(AppLanguage.English));
+            languageBox.SelectedIndex = 0;
+            languageBox.SelectedIndexChanged += LanguageBox_SelectedIndexChanged;
+            headerActions.Controls.Add(languageBox, 2, 0);
+
+            headerInfoLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Background,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            headerInfoLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            headerInfoLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92F));
+            headerInfoLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            headerInfoLayout.Controls.Add(lastProbeValue, 0, 0);
             updateLink = new LinkLabel
             {
                 Text = "檢查更新",
@@ -373,30 +523,14 @@ namespace NetOptimizerV2
                 ActiveLinkColor = TextColor,
                 VisitedLinkColor = Accent,
                 BackColor = Background,
-                Margin = new Padding(0, 0, 4, 0),
+                Margin = new Padding(0, 0, 0, 0),
                 Visible = false
             };
             Localization.Mark(updateLink, "檢查更新");
             updateLink.LinkClicked += delegate { OpenAvailableUpdate(); };
-            headerActions.Controls.Add(updateLink, 1, 0);
-            languageBox = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.FromArgb(17, 18, 20),
-                ForeColor = TextColor,
-                FlatStyle = FlatStyle.Flat,
-                Dock = DockStyle.None,
-                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
-                AutoSize = false,
-                Height = 25,
-                Margin = new Padding(0, 0, 0, 2)
-            };
-            languageBox.Items.Add(Localization.LanguageName(AppLanguage.TraditionalChinese));
-            languageBox.Items.Add(Localization.LanguageName(AppLanguage.English));
-            languageBox.SelectedIndex = 0;
-            languageBox.SelectedIndexChanged += LanguageBox_SelectedIndexChanged;
-            headerActions.Controls.Add(languageBox, 2, 0);
-            headerStatusLayout.Controls.Add(headerActions, 0, 2);
+            headerInfoLayout.Controls.Add(updateLink, 1, 0);
+            headerStatusLayout.Controls.Add(headerActions, 0, 0);
+            headerStatusLayout.Controls.Add(headerInfoLayout, 0, 1);
             headerLayout.Controls.Add(headerStatusLayout, 2, 0);
             mainLayout.Controls.Add(headerLayout, 0, 0);
             uiToolTip.SetToolTip(brandImage, "NetOptimizer 網路監測與備援工具");
@@ -492,10 +626,9 @@ namespace NetOptimizerV2
             failoverGrid.SetColumnSpan(failoverHealthValue, 2);
             failoverContent.Controls.Add(failoverGrid, 0, AddGridRow(failoverContent));
 
-            failoverAdvancedButton = new Button
+            failoverAdvancedButton = new ModernButton
             {
                 Text = "進階設定 ▸",
-                FlatStyle = FlatStyle.Flat,
                 BackColor = PanelBackground,
                 ForeColor = MutedText,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -504,7 +637,12 @@ namespace NetOptimizerV2
                 Dock = DockStyle.Fill,
                 Margin = new Padding(0, 4, 0, 0)
             };
-            failoverAdvancedButton.FlatAppearance.BorderColor = Color.FromArgb(59, 64, 71);
+            ModernButton modernFailoverAdvanced = failoverAdvancedButton as ModernButton;
+            if (modernFailoverAdvanced != null)
+            {
+                modernFailoverAdvanced.AccentBorder = false;
+                modernFailoverAdvanced.Glyph = "gear";
+            }
             Localization.Mark(failoverAdvancedButton, "進階設定 ▸");
             failoverAdvancedButton.Click += delegate
             {
@@ -589,15 +727,29 @@ namespace NetOptimizerV2
             supportButton = ButtonOf("☕ 支持開發", 0, 0, 128, 28, true);
             supportButton.Dock = DockStyle.None;
             supportButton.Margin = new Padding(8, 0, 0, 0);
+            ModernButton modernSupportButton = supportButton as ModernButton;
+            if (modernSupportButton != null)
+            {
+                modernSupportButton.Accent = false;
+                modernSupportButton.AccentBorder = true;
+                modernSupportButton.Glyph = "heart";
+            }
             supportButton.Click += delegate { OpenSupportDialog(); };
             permissionActions.Controls.Add(supportButton);
             adminButton = ButtonOf("重新以管理員啟動", 0, 0, 180, 28, false);
             adminButton.Dock = DockStyle.None;
             adminButton.Margin = new Padding(8, 0, 0, 0);
+            ModernButton modernAdminButton = adminButton as ModernButton;
+            if (modernAdminButton != null) { modernAdminButton.Glyph = "launch"; }
             adminButton.Click += delegate { RestartAsAdministrator(); };
             permissionActions.Controls.Add(adminButton);
             permissionPanel.Controls.Add(permissionActions, 1, row);
-            mainLayout.Controls.Add(permissionPanel, 0, 5);
+            permissionPanel.BackColor = Background;
+            permissionPanel.AutoSize = false;
+            permissionPanel.Dock = DockStyle.Fill;
+            permissionPanel.MinimumSize = new Size(0, 34);
+            permissionPanel.Margin = new Padding(0);
+            permissionPanel.Padding = new Padding(0, 2, 0, 0);
             uiToolTip.SetToolTip(adminButton, "重新啟動並要求系統管理員權限；不會自動提權。");
             uiToolTip.SetToolTip(supportButton, "開啟支持開發選項：Ko-fi 與加密貨幣地址。");
             uiToolTip.SetToolTip(startWithWindowsBox, "登入 Windows 後啟動並縮到系統匣。");
@@ -641,20 +793,27 @@ namespace NetOptimizerV2
             logGroup.Controls.Add(logSurface);
             mainLayout.Controls.Add(logGroup, 0, 6);
             BuildLogMenu();
+            AttachLogToBeginnerDashboard();
 
             TableLayoutPanel footer = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 AutoSize = false,
                 ColumnCount = 1,
-                RowCount = 1,
+                RowCount = 2,
                 Margin = new Padding(0),
-                Padding = new Padding(12, 6, 12, 10),
+                Padding = new Padding(10, 4, 10, 8),
                 BackColor = Background
             };
             footerLayout = footer;
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+            footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
             FlowLayoutPanel buttonFlow = FlowOf();
+            footerActionFlow = buttonFlow;
+            buttonFlow.BackColor = Background;
+            buttonFlow.WrapContents = false;
+            buttonFlow.Margin = new Padding(0);
             startButton = ButtonOf("開始監測", 0, 0, 112, 30, true);
             stopButton = ButtonOf("停止", 0, 0, 88, 30, false);
             refreshButton = ButtonOf("立即刷新", 0, 0, 104, 30, false);
@@ -670,8 +829,20 @@ namespace NetOptimizerV2
             refreshButton.Click += RefreshButton_Click;
             saveButton.Click += SaveButton_Click;
             exportButton.Click += ExportButton_Click;
+            ModernButton modernStartButton = startButton as ModernButton;
+            if (modernStartButton != null) { modernStartButton.Glyph = "shield"; }
+            ModernButton modernStopButton = stopButton as ModernButton;
+            if (modernStopButton != null) { modernStopButton.Glyph = "shield-stop"; }
+            ModernButton modernRefreshButton = refreshButton as ModernButton;
+            if (modernRefreshButton != null) { modernRefreshButton.Glyph = "refresh"; }
+            ModernButton modernExportButton = exportButton as ModernButton;
+            if (modernExportButton != null) { modernExportButton.Glyph = "log"; }
             footer.Controls.Add(buttonFlow, 0, 0);
+            footer.Controls.Add(permissionPanel, 0, 1);
             layoutShell.Controls.Add(footer, 0, 1);
+
+            BuildCustomTitleBar();
+            LayoutCustomChrome();
 
             trayIcon = (Icon)appIcon.Clone();
             tray = new NotifyIcon
@@ -747,6 +918,319 @@ namespace NetOptimizerV2
             backupInterfaceBox.TextChanged += delegate { UpdateInterfaceTooltip(backupInterfaceBox); };
         }
 
+        private void BuildAdvancedDrawer()
+        {
+            advancedDrawer = new Panel
+            {
+                Dock = DockStyle.Right,
+                Width = 520,
+                BackColor = PanelBackground,
+                Padding = new Padding(14, 10, 10, 10),
+                Visible = false,
+                TabStop = true
+            };
+            advancedDrawer.Paint += delegate(object sender, PaintEventArgs e)
+            {
+                using (Pen pen = new Pen(Color.FromArgb(63, 91, 108), 1F))
+                {
+                    e.Graphics.DrawLine(pen, 0, 0, 0, Math.Max(0, advancedDrawer.Height - 1));
+                }
+            };
+
+            TableLayoutPanel drawerHeader = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 38,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0, 0, 0, 8),
+                Padding = new Padding(0),
+                BackColor = PanelBackground
+            };
+            drawerHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            drawerHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36F));
+            drawerHeader.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            advancedDrawerTitle = LabelOf("進階設定", 0, 0, 0, 32, 11F, TextColor,
+                                         FontStyle.Bold, ContentAlignment.MiddleLeft);
+            advancedDrawerTitle.Dock = DockStyle.Fill;
+            advancedDrawerTitle.Margin = new Padding(0, 0, 4, 0);
+            drawerHeader.Controls.Add(advancedDrawerTitle, 0, 0);
+            advancedDrawerCloseButton = ButtonOf("×", 0, 0, 32, 30, false);
+            advancedDrawerCloseButton.Dock = DockStyle.Fill;
+            advancedDrawerCloseButton.Margin = new Padding(0, 2, 0, 2);
+            advancedDrawerCloseButton.AccessibleName = "Close advanced settings";
+            advancedDrawerCloseButton.Click += delegate
+            {
+                if (settingsDialog != null && !settingsDialog.IsDisposed)
+                {
+                    settingsDialog.Close();
+                }
+            };
+            drawerHeader.Controls.Add(advancedDrawerCloseButton, 1, 0);
+
+            advancedDrawerBody = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                BackColor = PanelBackground,
+                Padding = new Padding(0),
+                Margin = new Padding(0)
+            };
+            advancedDrawerLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                RowCount = 0,
+                BackColor = PanelBackground,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            advancedDrawerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            advancedDrawerBody.Controls.Add(advancedDrawerLayout);
+            advancedDrawer.Controls.Add(advancedDrawerBody);
+            advancedDrawer.Controls.Add(drawerHeader);
+            contentViewport.Controls.Add(advancedDrawer);
+            advancedDrawer.BringToFront();
+        }
+
+        private void BuildCustomTitleBar()
+        {
+            customTitleBar = new TableLayoutPanel
+            {
+                Dock = DockStyle.None,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Height = 38,
+                BackColor = Background,
+                ColumnCount = 4,
+                RowCount = 1,
+                Margin = new Padding(0),
+                Padding = new Padding(0, 0, 2, 0)
+            };
+            customTitleBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            customTitleBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46F));
+            customTitleBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46F));
+            customTitleBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46F));
+            customTitleBar.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            Panel dragSurface = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Background,
+                Margin = new Padding(0)
+            };
+            dragSurface.MouseDown += CustomTitleBar_MouseDown;
+            dragSurface.DoubleClick += CustomTitleBar_DoubleClick;
+            customTitleBar.Controls.Add(dragSurface, 0, 0);
+
+            chromeMinimizeButton = ChromeButtonOf("—", false);
+            chromeMinimizeButton.AccessibleName = "Minimize";
+            chromeMinimizeButton.Click += delegate { WindowState = FormWindowState.Minimized; };
+            customTitleBar.Controls.Add(chromeMinimizeButton, 1, 0);
+
+            chromeMaximizeButton = ChromeButtonOf("□", false);
+            chromeMaximizeButton.AccessibleName = "Maximize";
+            chromeMaximizeButton.Click += delegate { ToggleMaximizedWindow(); };
+            customTitleBar.Controls.Add(chromeMaximizeButton, 2, 0);
+
+            chromeCloseButton = ChromeButtonOf("×", true);
+            chromeCloseButton.AccessibleName = "Close";
+            chromeCloseButton.Click += delegate { Close(); };
+            customTitleBar.Controls.Add(chromeCloseButton, 3, 0);
+
+            Controls.Add(customTitleBar);
+            customTitleBar.BringToFront();
+            UpdateChromeButtons();
+        }
+
+        private void CustomTitleBar_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left && WindowState != FormWindowState.Maximized)
+            {
+                ReleaseCapture();
+                SendMessage(Handle, 0x00A1, new IntPtr(2), IntPtr.Zero);
+            }
+        }
+
+        private void CustomTitleBar_DoubleClick(object sender, EventArgs e)
+        {
+            ToggleMaximizedWindow();
+        }
+
+        private void ToggleMaximizedWindow()
+        {
+            WindowState = WindowState == FormWindowState.Maximized
+                ? FormWindowState.Normal
+                : FormWindowState.Maximized;
+            UpdateChromeButtons();
+        }
+
+        private void UpdateChromeButtons()
+        {
+            if (chromeMaximizeButton != null)
+            {
+                chromeMaximizeButton.Text = WindowState == FormWindowState.Maximized ? "❐" : "□";
+            }
+        }
+
+        private void LayoutCustomChrome()
+        {
+            if (customTitleBar == null || layoutShell == null) { return; }
+            int titleBarHeight = customTitleBar.Height;
+            customTitleBar.SetBounds(0, 0, Math.Max(0, ClientSize.Width), titleBarHeight);
+            layoutShell.SetBounds(0, titleBarHeight, Math.Max(0, ClientSize.Width),
+                                  Math.Max(0, ClientSize.Height - titleBarHeight));
+        }
+
+        private float GetDpiScale()
+        {
+            if (!IsHandleCreated) { return 1F; }
+            try
+            {
+                using (Graphics graphics = CreateGraphics())
+                {
+                    return Math.Max(1F, graphics.DpiX / 96F);
+                }
+            }
+            catch
+            {
+                return 1F;
+            }
+        }
+
+        private static int ScaleLayoutMetric(int value, float scale)
+        {
+            return Math.Max(1, (int)Math.Round(value * scale));
+        }
+
+        private void ApplyResponsiveLayout()
+        {
+            float scale = GetDpiScale();
+            // AutoScaleMode.Dpi already scales the child controls and fonts.  The
+            // compact shell metrics below are logical layout values; multiplying
+            // them a second time at 125/150% DPI makes the quick-start action row
+            // overflow behind the fixed footer.  Keep the shell compact and let
+            // the normal WinForms DPI pass scale the controls themselves.
+            Func<int, int> metric = delegate(int value) { return ScaleLayoutMetric(value, 1F); };
+
+            if (customTitleBar != null)
+            {
+                customTitleBar.Height = metric(38);
+                if (customTitleBar.ColumnStyles.Count >= 4)
+                {
+                    customTitleBar.ColumnStyles[1].Width = metric(46);
+                    customTitleBar.ColumnStyles[2].Width = metric(46);
+                    customTitleBar.ColumnStyles[3].Width = metric(46);
+                }
+            }
+            if (layoutShell != null && layoutShell.RowStyles.Count > 1)
+            {
+                layoutShell.RowStyles[1].Height = metric(advancedDrawerOpen ? 90 : 60);
+            }
+            if (contentViewport != null)
+            {
+                contentViewport.Padding = new Padding(metric(10), metric(4), metric(10), 0);
+            }
+            if (mainLayout != null && mainLayout.RowStyles.Count > 0)
+            {
+                // The status cluster is 34 + 20 logical pixels.  Keep only a
+                // two-pixel safety margin so the next group starts close to
+                // the header instead of inheriting the old 64 + 7 gap.
+                mainLayout.RowStyles[0].Height = metric(HeaderRowHeight);
+            }
+            if (headerLayout != null && headerLayout.ColumnStyles.Count >= 3)
+            {
+                headerLayout.ColumnStyles[0].Width = metric(64);
+                int available = Math.Max(metric(270), ClientSize.Width - metric(64) - metric(302));
+                headerLayout.ColumnStyles[2].Width = Math.Min(metric(302), available);
+            }
+            if (headerStatusLayout != null && headerStatusLayout.RowStyles.Count >= 2)
+            {
+                headerStatusLayout.RowStyles[0].Height = metric(34);
+                headerStatusLayout.RowStyles[1].Height = metric(20);
+            }
+            if (headerActionsLayout != null && headerActionsLayout.ColumnStyles.Count >= 3)
+            {
+                headerActionsLayout.ColumnStyles[0].Width = metric(210);
+                headerActionsLayout.ColumnStyles[1].Width = metric(46);
+                headerActionsLayout.ColumnStyles[2].Width = metric(46);
+            }
+            if (beginnerDashboard != null && beginnerDashboard.RowStyles.Count >= 3)
+            {
+                int inlineLogRowHeight = beginnerLogExpanded ? BeginnerInlineLogRowHeight : 0;
+                if (beginnerPanel != null)
+                {
+                    beginnerPanel.Height = metric(BeginnerPanelBaseHeight + inlineLogRowHeight);
+                }
+                beginnerDashboard.Height = metric(BeginnerDashboardBaseHeight + inlineLogRowHeight);
+                beginnerDashboard.RowStyles[0].Height = metric(159);
+                beginnerDashboard.RowStyles[1].Height = metric(42);
+                beginnerDashboard.RowStyles[2].Height = metric(52);
+                if (beginnerDashboard.RowStyles.Count >= 4)
+                {
+                    beginnerDashboard.RowStyles[3].SizeType = SizeType.Absolute;
+                    beginnerDashboard.RowStyles[3].Height = metric(inlineLogRowHeight);
+                }
+            }
+            if (beginnerPrimaryCard != null) { beginnerPrimaryCard.MaximumSize = new Size(0, metric(151)); }
+            if (beginnerBackupCard != null) { beginnerBackupCard.MaximumSize = new Size(0, metric(151)); }
+            if (footerLayout != null && footerLayout.RowStyles.Count >= 2)
+            {
+                footerLayout.RowStyles[0].Height = metric(advancedDrawerOpen ? 38 : 0);
+                footerLayout.RowStyles[1].Height = metric(advancedDrawerOpen ? 42 : 48);
+                footerLayout.Padding = new Padding(metric(10), metric(4), metric(10), metric(8));
+            }
+            if (advancedDrawer != null && contentViewport != null)
+            {
+                int availableWidth = Math.Max(metric(360), contentViewport.ClientSize.Width);
+                int minimumWidth = metric(360);
+                int preferredWidth = (int)Math.Round(availableWidth * 0.58F);
+                int drawerLimit = scale >= 1.5F ? 480 : 520;
+                advancedDrawer.Width = Math.Min(metric(drawerLimit), Math.Max(minimumWidth, preferredWidth));
+                advancedDrawer.Padding = new Padding(metric(14), metric(10), metric(10), metric(10));
+            }
+            LayoutCustomChrome();
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            const int wmNcHitTest = 0x0084;
+            const int htClient = 1;
+            const int htLeft = 10;
+            const int htRight = 11;
+            const int htTop = 12;
+            const int htTopLeft = 13;
+            const int htTopRight = 14;
+            const int htBottom = 15;
+            const int htBottomLeft = 16;
+            const int htBottomRight = 17;
+            if (m.Msg == wmNcHitTest && WindowState != FormWindowState.Maximized)
+            {
+                base.WndProc(ref m);
+                if (m.Result.ToInt32() == htClient)
+                {
+                    int screenX = (short)(m.LParam.ToInt64() & 0xFFFF);
+                    int screenY = (short)((m.LParam.ToInt64() >> 16) & 0xFFFF);
+                    Point point = PointToClient(new Point(screenX, screenY));
+                    const int grip = 6;
+                    bool left = point.X <= grip;
+                    bool right = point.X >= ClientSize.Width - grip;
+                    bool top = point.Y <= grip;
+                    bool bottom = point.Y >= ClientSize.Height - grip;
+                    if (top && left) { m.Result = new IntPtr(htTopLeft); }
+                    else if (top && right) { m.Result = new IntPtr(htTopRight); }
+                    else if (bottom && left) { m.Result = new IntPtr(htBottomLeft); }
+                    else if (bottom && right) { m.Result = new IntPtr(htBottomRight); }
+                    else if (left) { m.Result = new IntPtr(htLeft); }
+                    else if (right) { m.Result = new IntPtr(htRight); }
+                    else if (top) { m.Result = new IntPtr(htTop); }
+                    else if (bottom) { m.Result = new IntPtr(htBottom); }
+                }
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
         private string L(string source)
         {
             return Localization.Get(currentLanguage, source);
@@ -797,10 +1281,8 @@ namespace NetOptimizerV2
             {
                 if (engine.IsRunning)
                 {
-                    statusValue.Text = lastProbeIntervalMs > 0
-                        ? L("狀態：") + L("監測中") + " · " + L("下次約 ") + lastProbeIntervalMs + " ms"
-                        : L("狀態：") + L("監測中");
-                    statusValue.ForeColor = hasProbeResult && !lastProbeHealthy ? Warning : Accent;
+                    statusValue.Text = L("狀態：") + L("監測中");
+                    statusValue.ForeColor = GetMonitorStatusColor();
                 }
                 else
                 {
@@ -861,6 +1343,11 @@ namespace NetOptimizerV2
                 ? L("最近一次 TCP 探測結果。")
                 : L("完整結果：") + lastProbeSummary);
             uiToolTip.SetToolTip(languageBox, L("選擇介面語言。"));
+            if (languageBox != null)
+            {
+                languageBox.AccessibleName = L("選擇介面語言。");
+                languageBox.AccessibleDescription = L("選擇介面語言。");
+            }
             string startupTooltip = StartupManager.IsProtectedInstallPath(Application.ExecutablePath)
                 ? L("安裝版登入後會以系統管理員啟動並自動開始監測。")
                 : L("可攜版登入後啟動程式並縮到系統匣。");
@@ -898,112 +1385,211 @@ namespace NetOptimizerV2
         private GroupBox BuildBeginnerPanel()
         {
             GroupBox group = AutoGroupOf("快速開始");
-            group.AutoSize = true;
+            group.AutoSize = false;
             group.Dock = DockStyle.Top;
+            group.Height = 305;
+            group.Padding = new Padding(14, 18, 14, 10);
             group.MinimumSize = new Size(0, 0);
 
             TableLayoutPanel content = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                AutoSize = false,
+                Height = 255,
                 BackColor = PanelBackground,
                 ColumnCount = 2,
                 RowCount = 3,
                 Margin = new Padding(0),
-                Padding = new Padding(0)
+                Padding = new Padding(0, 2, 0, 0)
             };
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 116F));
-            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 159F));
+            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
             beginnerDashboard = content;
 
-            Panel primaryCard = BeginnerCard(new Padding(0, 0, 4, 8));
+            beginnerPrimaryCard = (ModernCard)BeginnerCard(new Padding(0, 0, 4, 8));
+            beginnerPrimaryCard.MaximumSize = new Size(0, 151);
+            Panel primaryCard = beginnerPrimaryCard;
             TableLayoutPanel primaryGrid = BeginnerCardGrid(1);
             primaryGrid.RowCount = 4;
-            primaryGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 18F));
-            primaryGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
-            primaryGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F));
-            primaryGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F));
-            primaryGrid.Controls.Add(BeginnerCardTitle("目前連線"), 0, 0);
-            beginnerPrimaryValue = LabelOf("尚未選擇", 0, 0, 0, 34, 12F, TextColor,
+            primaryGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50F));
+            primaryGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+            primaryGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 1F));
+            primaryGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
+
+            TableLayoutPanel primaryHeader = CardHeaderGrid();
+            beginnerPrimaryGlyph = new NetworkGlyph
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 8, 8, 8),
+                GlyphKind = NetworkGlyphKind.WiFi,
+                GlyphColor = Accent
+            };
+            primaryHeader.Controls.Add(beginnerPrimaryGlyph, 0, 0);
+            TableLayoutPanel primaryIdentity = CardIdentityGrid();
+            primaryIdentity.Controls.Add(BeginnerCardTitle("主要網路 A"), 0, 0);
+            beginnerPrimaryValue = LabelOf("尚未選擇", 0, 0, 0, 24, 10.5F, TextColor,
                                           FontStyle.Bold, ContentAlignment.MiddleLeft);
             beginnerPrimaryValue.Dock = DockStyle.Fill;
             beginnerPrimaryValue.AutoEllipsis = true;
-            beginnerPrimaryInterfaceBox = InterfaceBox();
+            primaryIdentity.Controls.Add(beginnerPrimaryValue, 0, 1);
+            primaryHeader.Controls.Add(primaryIdentity, 1, 0);
+            beginnerPrimaryStatePill = StatePillOf("未啟動", MutedText);
+            primaryHeader.Controls.Add(beginnerPrimaryStatePill, 2, 0);
+            primaryGrid.Controls.Add(primaryHeader, 0, 0);
+
+            beginnerPrimaryInterfaceBox = BeginnerInterfaceBox();
             beginnerPrimaryInterfaceBox.Dock = DockStyle.Fill;
-            beginnerPrimaryInterfaceBox.Margin = new Padding(0);
-            beginnerPrimaryHealthValue = LabelOf("尚未測試", 0, 0, 0, 24, 8.5F, MutedText,
+            beginnerPrimaryInterfaceBox.Font = new Font("Microsoft JhengHei UI", 10F);
+            beginnerPrimaryInterfaceBox.Margin = new Padding(0, 3, 0, 3);
+            primaryGrid.Controls.Add(beginnerPrimaryInterfaceBox, 0, 1);
+            primaryGrid.Controls.Add(SeparatorPanel(), 0, 2);
+            beginnerPrimaryHealthValue = LabelOf("最新延遲", 0, 0, 0, 24, 9F, MutedText,
                                                  FontStyle.Regular, ContentAlignment.MiddleLeft);
             beginnerPrimaryHealthValue.Dock = DockStyle.Fill;
             beginnerPrimaryHealthValue.AutoEllipsis = true;
-            primaryGrid.Controls.Add(beginnerPrimaryValue, 0, 1);
-            primaryGrid.Controls.Add(beginnerPrimaryInterfaceBox, 0, 2);
-            primaryGrid.Controls.Add(beginnerPrimaryHealthValue, 0, 3);
+            beginnerPrimarySignal = new SignalGlyph
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 4, 8, 4),
+                Level = 0,
+                ActiveColor = Accent,
+                InactiveColor = Color.FromArgb(66, 94, 109)
+            };
+            primaryGrid.Controls.Add(BeginnerHealthGrid(beginnerPrimarySignal, beginnerPrimaryHealthValue), 0, 3);
             primaryCard.Controls.Add(primaryGrid);
             content.Controls.Add(primaryCard, 0, 0);
 
-            Panel backupCard = BeginnerCard(new Padding(4, 0, 0, 8));
+            beginnerBackupCard = (ModernCard)BeginnerCard(new Padding(4, 0, 0, 8));
+            beginnerBackupCard.MaximumSize = new Size(0, 151);
+            Panel backupCard = beginnerBackupCard;
             TableLayoutPanel backupGrid = BeginnerCardGrid(1);
             backupGrid.RowCount = 4;
-            backupGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 18F));
-            backupGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
-            backupGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F));
-            backupGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 27F));
-            backupGrid.Controls.Add(BeginnerCardTitle("備援網路"), 0, 0);
-            beginnerBackupValue = LabelOf("未啟用", 0, 0, 0, 34, 12F, TextColor,
+            backupGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50F));
+            backupGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+            backupGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 1F));
+            backupGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
+
+            TableLayoutPanel backupHeader = CardHeaderGrid();
+            beginnerBackupGlyph = new NetworkGlyph
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 8, 8, 8),
+                GlyphKind = NetworkGlyphKind.Unknown,
+                GlyphColor = Color.FromArgb(60, 170, 255)
+            };
+            backupHeader.Controls.Add(beginnerBackupGlyph, 0, 0);
+            TableLayoutPanel backupIdentity = CardIdentityGrid();
+            backupIdentity.Controls.Add(BeginnerCardTitle("備援網路 B"), 0, 0);
+            beginnerBackupValue = LabelOf("未啟用", 0, 0, 0, 24, 10.5F, TextColor,
                                          FontStyle.Bold, ContentAlignment.MiddleLeft);
             beginnerBackupValue.Dock = DockStyle.Fill;
             beginnerBackupValue.AutoEllipsis = true;
-            beginnerBackupInterfaceBox = InterfaceBox();
+            backupIdentity.Controls.Add(beginnerBackupValue, 0, 1);
+            backupHeader.Controls.Add(backupIdentity, 1, 0);
+            beginnerBackupStatePill = StatePillOf("未啟用", MutedText);
+            backupHeader.Controls.Add(beginnerBackupStatePill, 2, 0);
+            backupGrid.Controls.Add(backupHeader, 0, 0);
+
+            beginnerBackupInterfaceBox = BeginnerInterfaceBox();
             beginnerBackupInterfaceBox.Dock = DockStyle.Fill;
-            beginnerBackupInterfaceBox.Margin = new Padding(0);
-            beginnerBackupHealthValue = LabelOf("未啟用", 0, 0, 0, 24, 8.5F, MutedText,
+            beginnerBackupInterfaceBox.Font = new Font("Microsoft JhengHei UI", 10F);
+            beginnerBackupInterfaceBox.Margin = new Padding(0, 3, 0, 3);
+            backupGrid.Controls.Add(beginnerBackupInterfaceBox, 0, 1);
+            backupGrid.Controls.Add(SeparatorPanel(), 0, 2);
+            beginnerBackupHealthValue = LabelOf("未啟用", 0, 0, 0, 24, 9F, MutedText,
                                                 FontStyle.Regular, ContentAlignment.MiddleLeft);
             beginnerBackupHealthValue.Dock = DockStyle.Fill;
             beginnerBackupHealthValue.AutoEllipsis = true;
-            backupGrid.Controls.Add(beginnerBackupValue, 0, 1);
-            backupGrid.Controls.Add(beginnerBackupInterfaceBox, 0, 2);
-            backupGrid.Controls.Add(beginnerBackupHealthValue, 0, 3);
+            beginnerBackupSignal = new SignalGlyph
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 4, 8, 4),
+                Level = 0,
+                ActiveColor = Color.FromArgb(255, 199, 42),
+                InactiveColor = Color.FromArgb(66, 94, 109)
+            };
+            backupGrid.Controls.Add(BeginnerHealthGrid(beginnerBackupSignal, beginnerBackupHealthValue), 0, 3);
             backupCard.Controls.Add(backupGrid);
             content.Controls.Add(backupCard, 1, 0);
 
-            FlowLayoutPanel options = FlowOf();
-            options.AutoSize = false;
-            options.WrapContents = true;
-            options.Padding = new Padding(0, 4, 0, 0);
-            beginnerFailoverBox = CheckBoxText("網路中斷時自動切換備援", false);
-            beginnerAutoRepairBox = CheckBoxText("遇到問題時自動修復", true);
-            options.Controls.Add(beginnerFailoverBox);
-            options.Controls.Add(beginnerAutoRepairBox);
+            TableLayoutPanel options = new TableLayoutPanel
+            {
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                BackColor = PanelBackground,
+                ColumnCount = 3,
+                RowCount = 1,
+                Margin = new Padding(0),
+                Padding = new Padding(2, 4, 0, 0)
+            };
+            options.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            options.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            options.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            beginnerFailoverBox = CheckBoxText("自動切換備援", false);
+            beginnerAutoRepairBox = CheckBoxText("自動修復", true);
+            options.Controls.Add(beginnerFailoverBox, 0, 0);
+            options.Controls.Add(beginnerAutoRepairBox, 1, 0);
+            options.Controls.Add(new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 1,
+                BackColor = Color.FromArgb(63, 91, 108),
+                Margin = new Padding(16, 20, 0, 0),
+                MinimumSize = new Size(16, 1)
+            }, 2, 0);
             content.Controls.Add(options, 0, 1);
             content.SetColumnSpan(options, 2);
 
-            FlowLayoutPanel tools = FlowOf();
-            tools.AutoSize = false;
-            tools.WrapContents = false;
-            tools.Padding = new Padding(0, 4, 0, 0);
-            beginnerStartButton = ButtonOf("開始自動保護", 0, 0, 180, 36, true);
+            TableLayoutPanel tools = new TableLayoutPanel
+            {
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                BackColor = PanelBackground,
+                ColumnCount = 4,
+                RowCount = 1,
+                Margin = new Padding(0),
+                Padding = new Padding(2, 4, 0, 0)
+            };
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31F));
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 23F));
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 23F));
+            tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 23F));
+            tools.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            beginnerStartButton = ButtonOf("開始自動保護", 0, 0, 220, 42, true);
+            beginnerStartButton.Dock = DockStyle.Fill;
             beginnerStartButton.Margin = new Padding(0, 0, 8, 0);
+            ModernButton modernBeginnerStart = beginnerStartButton as ModernButton;
+            if (modernBeginnerStart != null) { modernBeginnerStart.Glyph = "shield"; }
             beginnerStartButton.Click += delegate
             {
                 if (engine.IsRunning) { StopMonitoring(); }
                 else { StartButton_Click(this, EventArgs.Empty); }
             };
-            tools.Controls.Add(beginnerStartButton);
-            beginnerDetectButton = ButtonOf("重新偵測網路", 0, 0, 132, 28, false);
-            beginnerDetectButton.Margin = new Padding(0, 2, 8, 0);
+            tools.Controls.Add(beginnerStartButton, 0, 0);
+            beginnerDetectButton = ButtonOf("重新偵測網路", 0, 0, 176, 36, false);
+            beginnerDetectButton.Dock = DockStyle.Fill;
+            beginnerDetectButton.Margin = new Padding(0, 3, 6, 0);
+            ModernButton modernBeginnerDetect = beginnerDetectButton as ModernButton;
+            if (modernBeginnerDetect != null) { modernBeginnerDetect.Glyph = "refresh"; }
             beginnerDetectButton.Click += delegate { AutoDetectBeginnerInterfaces(); };
-            tools.Controls.Add(beginnerDetectButton);
-            beginnerRestoreButton = ButtonOf("復原上一筆變更", 0, 0, 145, 28, false);
-            beginnerRestoreButton.Margin = new Padding(0, 2, 8, 0);
+            tools.Controls.Add(beginnerDetectButton, 1, 0);
+            beginnerRestoreButton = ButtonOf("復原上一筆變更", 0, 0, 176, 36, false);
+            beginnerRestoreButton.Dock = DockStyle.Fill;
+            beginnerRestoreButton.Margin = new Padding(0, 3, 6, 0);
+            ModernButton modernBeginnerRestore = beginnerRestoreButton as ModernButton;
+            if (modernBeginnerRestore != null) { modernBeginnerRestore.Glyph = "undo"; }
             beginnerRestoreButton.Click += BeginnerRestoreButton_Click;
-            tools.Controls.Add(beginnerRestoreButton);
-            beginnerLogButton = ButtonOf("查看執行紀錄 ▸", 0, 0, 140, 28, false);
-            beginnerLogButton.Margin = new Padding(0, 2, 0, 0);
-            tools.Controls.Add(beginnerLogButton);
+            tools.Controls.Add(beginnerRestoreButton, 2, 0);
+            beginnerLogButton = ButtonOf("查看執行紀錄 ▸", 0, 0, 150, 36, false);
+            beginnerLogButton.Dock = DockStyle.Fill;
+            beginnerLogButton.Margin = new Padding(0, 3, 0, 0);
+            ModernButton modernBeginnerLog = beginnerLogButton as ModernButton;
+            if (modernBeginnerLog != null) { modernBeginnerLog.Glyph = "log"; }
+            tools.Controls.Add(beginnerLogButton, 3, 0);
             content.Controls.Add(tools, 0, 2);
             content.SetColumnSpan(tools, 2);
 
@@ -1064,12 +1650,12 @@ namespace NetOptimizerV2
                     beginnerPrimaryInterfaceBox.Text = string.Empty;
                     beginnerBackupInterfaceBox.Text = string.Empty;
                     if (interfaceBox != null) { interfaceBox.Text = string.Empty; }
-                    if (beginnerMode) { SyncBeginnerSettingsToAdvanced(); }
+                    if (beginnerMode) { SyncBeginnerSettingsToAdvanced(true); }
                     UpdateBeginnerStatus();
                     string noReadyMessage =
                         L("自動偵測未找到任何就緒網路；主要與備援已留空。") + Environment.NewLine +
                         L("沒有偵測到就緒備援，自動切換已關閉。") + Environment.NewLine +
-                        L("請先連線 Wi‑Fi 或藍牙網路，再按「重新偵測網路」。");
+                        L("請先連線 Wi‑Fi、藍牙或乙太網路，再按「重新偵測網路」。");
                     AppendLog(L("自動偵測：沒有找到具 IPv4 與 gateway 的就緒網路。"), true);
                     if (showPrompt)
                     {
@@ -1091,7 +1677,7 @@ namespace NetOptimizerV2
                 if (interfaceBox != null) { interfaceBox.Text = selection.Primary.Name; }
                 if (beginnerMode)
                 {
-                    SyncBeginnerSettingsToAdvanced();
+                    SyncBeginnerSettingsToAdvanced(true);
                 }
                 UpdateBeginnerStatus();
 
@@ -1246,6 +1832,8 @@ namespace NetOptimizerV2
         internal static void RunUiLayoutSelfTest()
         {
             RunAutoDetectSelectionSelfTest();
+            RunNetworkGlyphSelfTest();
+            UiIconRenderer.RunSelfTest();
             using (MainForm form = new MainForm(false, false, false))
             {
                 form.CreateControl();
@@ -1254,29 +1842,61 @@ namespace NetOptimizerV2
                 form.Show();
                 Application.DoEvents();
                 form.beginnerMode = true;
+                form.advancedDrawerOpen = false;
                 form.UpdateBeginnerStatus();
                 form.UpdateUiMode();
                 form.UpdateButtons();
                 form.PerformLayout();
-
-                if (form.layoutRoot == null || form.layoutRoot.Controls.Count != 7 ||
-                     form.layoutShell == null || form.footerLayout == null ||
-                     form.beginnerPanel == null || !form.beginnerMode || !form.beginnerPanel.Visible ||
-                     form.beginnerDashboard == null ||
-                     form.beginnerPrimaryValue == null || form.beginnerPrimaryHealthValue == null ||
+                if (form.layoutRoot == null || form.layoutRoot.Controls.Count != 2 ||
+                      form.layoutShell == null || form.footerLayout == null ||
+                      form.beginnerPanel == null || !form.beginnerMode || !form.beginnerPanel.Visible ||
+                      form.beginnerDashboard == null ||
+                     form.permissionPanel == null || form.permissionPanel.Parent != form.footerLayout ||
+                     !form.footerLayout.Visible ||
+                      form.beginnerPrimaryValue == null || form.beginnerPrimaryHealthValue == null ||
                      form.beginnerBackupValue == null || form.beginnerBackupHealthValue == null ||
                      form.beginnerStartButton == null || !form.beginnerStartButton.Visible ||
                     form.beginnerDetectButton == null || !form.beginnerDetectButton.Visible ||
                     form.beginnerRestoreButton == null || !form.beginnerRestoreButton.Visible ||
                     form.startWithWindowsBox == null || !form.startWithWindowsBox.Visible ||
-                    form.trayStartup == null ||
-                    form.monitorGroup.Visible || form.actionsGroup.Visible ||
-                    form.failoverGroup.Visible || form.logGroup.Visible)
+                     form.trayStartup == null ||
+                     form.monitorGroup.Visible || form.actionsGroup.Visible ||
+                     form.failoverGroup.Visible || form.logGroup.Visible ||
+                     form.monitorGroup.Parent != form.advancedDrawerLayout ||
+                     form.actionsGroup.Parent != form.advancedDrawerLayout ||
+                     form.failoverGroup.Parent != form.advancedDrawerLayout ||
+                     form.logGroup.Parent != form.beginnerDashboard)
                 {
-                    throw new InvalidOperationException("新手模式或主布局控制項數量不正確。");
+                    throw new InvalidOperationException(
+                        "Beginner controls/layout invalid: rows=" +
+                        (form.layoutRoot == null ? "null" : form.layoutRoot.Controls.Count.ToString()) +
+                        ", panelVisible=" + (form.beginnerPanel != null && form.beginnerPanel.Visible) +
+                        ", dashboard=" + (form.beginnerDashboard == null ? "null" : form.beginnerDashboard.Size.ToString()));
                 }
                 AssertBeginnerDashboard(form, "初始");
                 AssertHeaderVisible(form, "初始");
+                ModernButton headerModeButton = form.modeButton as ModernButton;
+                ModernComboBox headerLanguageBox = form.languageBox as ModernComboBox;
+                if (form.modeButton.Text != form.L("顯示進階設定 ▸") ||
+                    headerModeButton == null || !headerModeButton.IconOnly ||
+                    !string.Equals(headerModeButton.Glyph, "gear", StringComparison.OrdinalIgnoreCase) ||
+                    form.modeButton.Width < 36 || form.modeButton.Height < 24 ||
+                    headerLanguageBox == null || !headerLanguageBox.IconOnly ||
+                    !headerLanguageBox.ShowGlobe ||
+                    form.languageBox.Width < 38)
+                {
+                    throw new InvalidOperationException("標題區的圖示入口或尺寸不正確。");
+                }
+                form.languageBox.Focus();
+                form.languageBox.DroppedDown = true;
+                Application.DoEvents();
+                bool languageMenuOpened = form.languageBox.DroppedDown;
+                form.languageBox.DroppedDown = false;
+                Application.DoEvents();
+                if (!languageMenuOpened || form.languageBox.Items.Count < 2)
+                {
+                    throw new InvalidOperationException("語言圖示入口無法展開語言選單。");
+                }
                 if (form.brandImage == null || form.brandImage.Image == null)
                 {
                     throw new InvalidOperationException("品牌圖示未載入。");
@@ -1315,6 +1935,7 @@ namespace NetOptimizerV2
                                       form.languageBox.SelectedIndex == 1 &&
                                       form.beginnerPanel.Text == "Quick start" &&
                                       form.beginnerStartButton.Text == "Start protection" &&
+                                      form.modeButton.Text == "Advanced ▸" &&
                                       form.supportButton.Text == "☕ Support" &&
                                       form.startWithWindowsBox.Text == "Start with Windows" &&
                                       form.trayStartup.Text == "Start with Windows";
@@ -1326,10 +1947,28 @@ namespace NetOptimizerV2
                 }
                 AssertNoNotPresentInterfaceItems(form, "初始");
                 SupportDialog.RunUiSelfTest();
-                if (form.FormBorderStyle != FormBorderStyle.Sizable || !form.MaximizeBox ||
-                     form.MinimumSize.Width < 760 || form.MinimumSize.Height < 420)
+                if (form.FormBorderStyle != FormBorderStyle.None || form.MaximizeBox || form.MinimizeBox ||
+                     form.customTitleBar == null || form.customTitleBar.Height < 32 ||
+                     !form.customTitleBar.Visible || form.customTitleBar.Parent != form ||
+                     form.layoutShell == null || form.layoutShell.Top < form.customTitleBar.Bottom ||
+                     form.chromeMinimizeButton == null || form.chromeMinimizeButton.Height < 28 ||
+                     form.chromeMaximizeButton == null || form.chromeMaximizeButton.Height < 28 ||
+                     form.chromeCloseButton == null || form.chromeCloseButton.Height < 28 ||
+                     form.MinimumSize.Width < 760 || form.MinimumSize.Height < 400)
                 {
-                    throw new InvalidOperationException("視窗縮放或最小尺寸設定不正確。");
+                    throw new InvalidOperationException("自訂標題列或視窗縮放設定不正確。");
+                }
+                form.chromeMaximizeButton.PerformClick();
+                Application.DoEvents();
+                if (form.WindowState != FormWindowState.Maximized)
+                {
+                    throw new InvalidOperationException("自訂最大化按鈕未正常運作。");
+                }
+                form.chromeMaximizeButton.PerformClick();
+                Application.DoEvents();
+                if (form.WindowState != FormWindowState.Normal)
+                {
+                    throw new InvalidOperationException("自訂還原按鈕未正常運作。");
                 }
                 if (form.ClientSize.Height > 560)
                 {
@@ -1340,17 +1979,65 @@ namespace NetOptimizerV2
                     throw new InvalidOperationException("新手模式預設視窗不應出現垂直捲軸。");
                 }
                 if (form.failoverAdvancedPanel == null || form.failoverAdvancedPanel.Visible ||
-                    form.logEmptyLabel == null)
+                    form.logEmptyLabel == null || form.logGroup.Parent != form.beginnerDashboard ||
+                    form.logGroup.Visible)
                 {
-                    throw new InvalidOperationException("進階設定或紀錄空狀態未正確初始化。");
+                    throw new InvalidOperationException("進階設定初始狀態不正確。");
                 }
                 form.beginnerLogButton.PerformClick();
+                form.PerformLayout();
+                if (!form.logGroup.Visible || form.logGroup.Parent != form.beginnerDashboard ||
+                    form.logGroup.Height < 180 || form.beginnerPanel.Height <= BeginnerPanelBaseHeight)
+                {
+                    throw new InvalidOperationException("執行紀錄未在新手主畫面下方展開。");
+                }
                 form.ClearLogContent();
                 if (!form.logEmptyLabel.Visible)
                 {
                     throw new InvalidOperationException("清除紀錄後的空狀態未正確顯示。");
                 }
                 form.beginnerLogButton.PerformClick();
+                form.PerformLayout();
+                if (form.advancedDrawerOpen || form.logGroup.Visible ||
+                    form.beginnerPanel.Height != BeginnerPanelBaseHeight)
+                {
+                    throw new InvalidOperationException("新手畫面的執行紀錄收合狀態不正確。");
+                }
+
+                bool settingsDialogOpened = false;
+                bool settingsDialogLayoutValid = false;
+                using (System.Windows.Forms.Timer closeSettingsTimer = new System.Windows.Forms.Timer())
+                {
+                    closeSettingsTimer.Interval = 100;
+                    closeSettingsTimer.Tick += delegate
+                    {
+                        closeSettingsTimer.Stop();
+                        foreach (Form window in Application.OpenForms)
+                        {
+                            AdvancedSettingsDialog settingsWindow = window as AdvancedSettingsDialog;
+                            if (settingsWindow != null)
+                            {
+                                settingsDialogOpened = true;
+                                settingsDialogLayoutValid = form.advancedDrawer.Parent != null &&
+                                    form.monitorGroup.Parent == form.advancedDrawerLayout &&
+                                    form.actionsGroup.Parent == form.advancedDrawerLayout &&
+                                    form.failoverGroup.Parent == form.advancedDrawerLayout &&
+                                    form.monitorGroup.Visible && form.actionsGroup.Visible &&
+                                    form.failoverGroup.Visible;
+                                settingsWindow.Close();
+                                break;
+                            }
+                        }
+                    };
+                    closeSettingsTimer.Start();
+                    form.modeButton.PerformClick();
+                }
+                if (!settingsDialogOpened || !settingsDialogLayoutValid || form.settingsDialog != null ||
+                    form.advancedDrawerOpen || form.monitorGroup.Visible || form.actionsGroup.Visible ||
+                    form.failoverGroup.Visible || form.logGroup.Parent != form.beginnerDashboard)
+                {
+                    throw new InvalidOperationException("設定按鈕未以獨立視窗開啟進階設定。");
+                }
 
                 List<InterfaceSnapshot> readyBeforeDetect = NetworkInfo.GetInterfaceSnapshots()
                     .Where(delegate(InterfaceSnapshot item) { return item != null && item.IsReady; })
@@ -1433,27 +2120,20 @@ namespace NetOptimizerV2
 
                 form.beginnerLogButton.PerformClick();
                 form.PerformLayout();
-                if (!form.logGroup.Visible)
+                if (!form.logGroup.Visible || form.logGroup.Parent != form.beginnerDashboard ||
+                    form.logGroup.Bottom > form.beginnerDashboard.ClientSize.Height + 1)
                 {
-                    throw new InvalidOperationException("新手模式無法展開執行紀錄。");
+                    throw new InvalidOperationException("寬視窗無法在主畫面下方展開執行紀錄。");
                 }
                 form.beginnerLogButton.PerformClick();
-                if (form.logGroup.Visible)
-                {
-                    throw new InvalidOperationException("新手模式無法收合執行紀錄。");
-                }
-
-                form.modeButton.PerformClick();
                 form.PerformLayout();
-                if (form.beginnerMode || !form.monitorGroup.Visible || !form.actionsGroup.Visible ||
-                    !form.failoverGroup.Visible || !form.logGroup.Visible)
+                if (form.logGroup.Visible || form.beginnerPanel.Height != BeginnerPanelBaseHeight)
                 {
-                    throw new InvalidOperationException("進階模式切換布局失敗。");
+                    throw new InvalidOperationException("寬視窗無法收合主畫面執行紀錄。");
                 }
-                AssertHeaderVisible(form, "進階模式");
-                AssertLayoutHasWidth(form, "進階模式");
-                AssertFooterVisible(form, "進階模式");
 
+                form.advancedDrawer.Visible = true;
+                form.failoverGroup.Visible = true;
                 form.advancedExpanded = true;
                 form.UpdateFailoverAdvanced();
                 form.PerformLayout();
@@ -1469,15 +2149,22 @@ namespace NetOptimizerV2
                 {
                     throw new InvalidOperationException("A/B 進階設定收合布局失敗。");
                 }
+                form.failoverGroup.Visible = false;
+                form.advancedDrawer.Visible = false;
 
-                form.modeButton.PerformClick();
                 form.PerformLayout();
-                if (!form.beginnerMode || !form.beginnerPanel.Visible || form.monitorGroup.Visible ||
-                    form.actionsGroup.Visible || form.failoverGroup.Visible || form.logGroup.Visible)
+                if (!form.beginnerMode || !form.beginnerPanel.Visible || form.advancedDrawerOpen ||
+                    form.monitorGroup.Visible ||
+                    form.actionsGroup.Visible || form.failoverGroup.Visible || form.logGroup.Visible ||
+                     form.monitorGroup.Parent != form.advancedDrawerLayout ||
+                     form.actionsGroup.Parent != form.advancedDrawerLayout ||
+                     form.failoverGroup.Parent != form.advancedDrawerLayout ||
+                     form.logGroup.Parent != form.beginnerDashboard ||
+                     form.permissionPanel.Parent != form.footerLayout)
                 {
-                    throw new InvalidOperationException("新手模式切換布局失敗。");
+                    throw new InvalidOperationException("設定視窗關閉後的新手模式布局失敗。");
                 }
-                AssertFooterVisible(form, "回到新手模式");
+                AssertFooterVisible(form, "設定視窗關閉後");
 
                 Console.WriteLine("NetOptimizer UI layout test: PASS");
             }
@@ -1541,7 +2228,11 @@ namespace NetOptimizerV2
                                 ", windowState=" + form.WindowState + ", title=" + form.Text);
                         }
 
-                        form.WindowState = FormWindowState.Minimized;
+                        if (form.chromeMinimizeButton == null)
+                        {
+                            throw new InvalidOperationException("custom minimize button was not created");
+                        }
+                        form.chromeMinimizeButton.PerformClick();
                         Application.DoEvents();
                         form.ShowFromTray();
                         if (!form.Visible || form.WindowState != FormWindowState.Normal ||
@@ -1581,6 +2272,18 @@ namespace NetOptimizerV2
 
         internal static void SaveUiSnapshot(string outputPath, AppLanguage language)
         {
+            SaveUiSnapshot(outputPath, language, string.Empty, false);
+        }
+
+        internal static void SaveUiSnapshot(string outputPath, AppLanguage language,
+                                             string snapshotNetwork)
+        {
+            SaveUiSnapshot(outputPath, language, snapshotNetwork, false);
+        }
+
+        internal static void SaveUiSnapshot(string outputPath, AppLanguage language,
+                                             string snapshotNetwork, bool snapshotLog)
+        {
             if (string.IsNullOrWhiteSpace(outputPath))
             {
                 throw new ArgumentException("Snapshot output path is required.", "outputPath");
@@ -1601,6 +2304,13 @@ namespace NetOptimizerV2
                 form.Location = new Point(20, 20);
                 form.Show();
                 Application.DoEvents();
+                form.ApplySnapshotNetworkOverride(snapshotNetwork);
+                if (snapshotLog)
+                {
+                    form.beginnerLogExpanded = true;
+                    form.UpdateUiMode();
+                }
+                Application.DoEvents();
                 form.PerformLayout();
                 AssertBeginnerDashboard(form, "snapshot");
                 AssertHeaderVisible(form, "snapshot");
@@ -1616,15 +2326,85 @@ namespace NetOptimizerV2
             Console.WriteLine("NetOptimizer UI snapshot: PASS " + fullPath);
         }
 
+        private void ApplySnapshotNetworkOverride(string snapshotNetwork)
+        {
+            if (string.IsNullOrWhiteSpace(snapshotNetwork)) { return; }
+
+            NetworkGlyphKind kind;
+            string normalized = snapshotNetwork.Trim().ToLowerInvariant();
+            if (normalized == "wifi" || normalized == "wi-fi" || normalized == "wireless")
+            {
+                kind = NetworkGlyphKind.WiFi;
+            }
+            else if (normalized == "bluetooth" || normalized == "bt" || normalized == "藍牙")
+            {
+                kind = NetworkGlyphKind.Bluetooth;
+            }
+            else if (normalized == "ethernet" || normalized == "lan" ||
+                     normalized == "乙太網路" || normalized == "以太網路")
+            {
+                kind = NetworkGlyphKind.Ethernet;
+            }
+            else
+            {
+                throw new ArgumentException(
+                    "Unsupported snapshot network. Use wifi, bluetooth, or ethernet.",
+                    "snapshotNetwork");
+            }
+
+            if (beginnerPrimaryGlyph != null)
+            {
+                beginnerPrimaryGlyph.GlyphKind = kind;
+                beginnerPrimaryGlyph.GlyphColor = Accent;
+            }
+            if (beginnerPrimaryInterfaceBox != null)
+            {
+                for (int index = 0; index < beginnerPrimaryInterfaceBox.Items.Count; index++)
+                {
+                    string item = Convert.ToString(beginnerPrimaryInterfaceBox.Items[index]);
+                    if (string.Equals(item, "藍牙網路連線", StringComparison.OrdinalIgnoreCase) ||
+                        (kind == NetworkGlyphKind.WiFi &&
+                         item.IndexOf("Wi-Fi", StringComparison.OrdinalIgnoreCase) >= 0) ||
+                        (kind == NetworkGlyphKind.Ethernet &&
+                         (item.IndexOf("乙太", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                          item.IndexOf("Ethernet", StringComparison.OrdinalIgnoreCase) >= 0)))
+                    {
+                        beginnerPrimaryInterfaceBox.SelectedIndex = index;
+                        break;
+                    }
+                }
+            }
+            if (beginnerPrimaryValue != null)
+            {
+                beginnerPrimaryValue.Text = kind == NetworkGlyphKind.WiFi ? "Wi-Fi" :
+                    kind == NetworkGlyphKind.Bluetooth ? "藍牙網路連線" : "乙太網路";
+            }
+        }
+
         private static void AssertLayoutHasWidth(MainForm form, string stage)
         {
-            Control monitor = form.layoutRoot.GetControlFromPosition(0, 2);
-            Control failover = form.layoutRoot.GetControlFromPosition(0, 4);
-            Control log = form.layoutRoot.GetControlFromPosition(0, 6);
-            if (monitor == null || failover == null || log == null ||
-                monitor.Width <= 0 || failover.Width <= 0 || log.Width <= 0)
+            if (form.advancedDrawerOpen)
             {
-                throw new InvalidOperationException(stage + "布局沒有取得有效寬度。");
+                Control[] drawerControls =
+                {
+                    form.monitorGroup,
+                    form.actionsGroup,
+                    form.failoverGroup
+                };
+                foreach (Control control in drawerControls)
+                {
+                    if (control == null || control.Parent != form.advancedDrawerLayout ||
+                        control.Width <= 0 || control.Height <= 0)
+                    {
+                        throw new InvalidOperationException(stage + "進階抽屜沒有取得有效寬度。");
+                    }
+                }
+                return;
+            }
+            if (form.beginnerPanel == null || form.beginnerPanel.Width <= 0 ||
+                form.beginnerDashboard == null || form.beginnerDashboard.Width <= 0)
+            {
+                throw new InvalidOperationException(stage + "新手布局沒有取得有效寬度。");
             }
         }
 
@@ -1701,14 +2481,48 @@ namespace NetOptimizerV2
             }
         }
 
+        private static void RunNetworkGlyphSelfTest()
+        {
+            if (ClassifyNetworkGlyph(NetworkInterfaceType.Wireless80211, "Wi-Fi") !=
+                NetworkGlyphKind.WiFi)
+            {
+                throw new InvalidOperationException("Wi-Fi 圖示判斷失敗。");
+            }
+            if (ClassifyNetworkGlyph(NetworkInterfaceType.Unknown, "藍牙網路連線") !=
+                NetworkGlyphKind.Bluetooth)
+            {
+                throw new InvalidOperationException("藍牙圖示判斷失敗。");
+            }
+            if (ClassifyNetworkGlyph(NetworkInterfaceType.Ethernet,
+                                     "藍牙網路連線 Bluetooth Device (Personal Area Network)") !=
+                NetworkGlyphKind.Bluetooth)
+            {
+                throw new InvalidOperationException("藍牙 PAN 介面不可被誤判為乙太網路。");
+            }
+            if (ClassifyNetworkGlyph(NetworkInterfaceType.Ethernet, "乙太網路") !=
+                NetworkGlyphKind.Ethernet)
+            {
+                throw new InvalidOperationException("乙太網路圖示判斷失敗。");
+            }
+            if (ClassifyNetworkGlyph(NetworkInterfaceType.Unknown, string.Empty) !=
+                NetworkGlyphKind.Unknown)
+            {
+                throw new InvalidOperationException("未選擇介面時的中性圖示判斷失敗。");
+            }
+        }
+
         private static void AssertBeginnerDashboard(MainForm form, string stage)
         {
             if (form.beginnerPanel == null || form.beginnerDashboard == null ||
-                form.beginnerPanel.Height <= 0 || form.beginnerPanel.Height >= 400 ||
+                form.beginnerPanel.Height <= 0 || form.layoutRoot == null ||
                 form.beginnerDashboard.Width <= 0 || form.beginnerDashboard.Height <= 0 ||
-                form.beginnerDashboard.Height >= 330)
+                form.beginnerPanel.Bottom > form.layoutRoot.ClientSize.Height + 1 ||
+                form.beginnerDashboard.Bottom > form.beginnerPanel.ClientSize.Height + 1)
             {
-                throw new InvalidOperationException(stage + "新手介面沒有收合至內容高度。 ");
+                throw new InvalidOperationException(
+                    "Beginner layout size invalid at " + stage +
+                    ": panel=" + (form.beginnerPanel == null ? "null" : form.beginnerPanel.Size.ToString()) +
+                    ", dashboard=" + (form.beginnerDashboard == null ? "null" : form.beginnerDashboard.Size.ToString()));
             }
 
             foreach (Control control in new Control[]
@@ -1735,26 +2549,27 @@ namespace NetOptimizerV2
         private static void AssertHeaderVisible(MainForm form, string stage)
         {
             if (form.headerLayout == null || form.headerStatusLayout == null ||
+                form.headerInfoLayout == null ||
                 form.titleLabel == null || form.statusValue == null ||
                 form.lastProbeValue == null || form.modeButton == null ||
                 form.languageBox == null || form.updateLink == null)
             {
-                throw new InvalidOperationException(stage + "標題區控制項未完整建立。");
+                throw new InvalidOperationException(stage + " header controls were not fully created.");
             }
 
             Rectangle headerBounds = new Rectangle(
                 form.headerLayout.PointToScreen(Point.Empty), form.headerLayout.ClientSize);
             Rectangle beginnerBounds = new Rectangle(
                 form.beginnerPanel.PointToScreen(Point.Empty), form.beginnerPanel.ClientSize);
-            Control[] controls =
+            List<Control> controls = new List<Control>
             {
                 form.brandImage,
                 form.titleLabel,
                 form.statusValue,
-                form.lastProbeValue,
                 form.modeButton,
                 form.languageBox
             };
+            if (form.lastProbeValue.Visible) { controls.Add(form.lastProbeValue); }
             foreach (Control control in controls)
             {
                 Rectangle bounds = new Rectangle(control.PointToScreen(Point.Empty), control.ClientSize);
@@ -1769,31 +2584,33 @@ namespace NetOptimizerV2
 
             if (form.modeButton.Height < 24 || headerBounds.Bottom > beginnerBounds.Top)
             {
-                throw new InvalidOperationException(stage + "標題區與快速開始區重疊或切換按鈕高度不足。");
+                throw new InvalidOperationException(stage + " header overlaps quick start or mode button is too short.");
             }
         }
 
         private static void AssertFooterVisible(MainForm form, string stage)
         {
-            if (form.beginnerMode)
+            if (!form.footerLayout.Visible || form.footerLayout.Height < 40 ||
+                form.footerLayout.Bottom > form.layoutShell.ClientSize.Height ||
+                form.permissionPanel == null || form.permissionPanel.Parent != form.footerLayout ||
+                form.permissionPanel.Width <= 0 || form.permissionPanel.Height <= 0 ||
+                form.supportButton == null || !form.supportButton.Visible ||
+                form.permissionActions == null || form.supportButton.Parent != form.permissionActions ||
+                form.supportButton.Width <= 0 || form.supportButton.Height <= 0 ||
+                form.supportButton.Right > form.permissionActions.ClientSize.Width ||
+                form.supportButton.Bottom > form.permissionActions.ClientSize.Height)
             {
-                int footerRowHeight = form.layoutShell.GetRowHeights()[1];
-                if (form.footerLayout.Visible || footerRowHeight > 1 ||
-                    form.supportButton == null || !form.supportButton.Visible ||
-                    form.permissionActions == null || form.supportButton.Parent != form.permissionActions ||
-                    form.supportButton.Width <= 0 || form.supportButton.Height <= 0 ||
-                    form.supportButton.Right > form.permissionActions.ClientSize.Width ||
-                    form.supportButton.Bottom > form.permissionActions.ClientSize.Height)
-                {
-                    throw new InvalidOperationException(stage + "新手模式的支持開發入口未完整顯示。");
-                }
-                return;
+                throw new InvalidOperationException(stage + "固定底欄未完整顯示。");
             }
 
-            if (!form.footerLayout.Visible || form.footerLayout.Height < 40 ||
-                form.footerLayout.Bottom > form.layoutShell.ClientSize.Height)
+            if (!form.advancedDrawerOpen)
             {
-                throw new InvalidOperationException(stage + "頁尾按鈕沒有固定在可視區域。");
+                if (form.footerActionFlow == null || form.footerActionFlow.Visible ||
+                    form.footerLayout.RowStyles[0].Height > 1)
+                {
+                    throw new InvalidOperationException(stage + "新手底欄仍顯示進階操作列。");
+                }
+                return;
             }
 
             Button[] buttons = new[] { form.startButton, form.stopButton, form.refreshButton,
@@ -1801,10 +2618,10 @@ namespace NetOptimizerV2
             foreach (Button button in buttons)
             {
                 if (button == null || !button.Visible || button.Width <= 0 || button.Height <= 0 ||
-                    button.Right > form.footerLayout.ClientSize.Width ||
-                    button.Bottom > form.footerLayout.ClientSize.Height)
+                    button.Right > form.footerActionFlow.ClientSize.Width ||
+                    button.Bottom > form.footerActionFlow.ClientSize.Height)
                 {
-                    throw new InvalidOperationException(stage + "頁尾操作按鈕未完整顯示。");
+                    throw new InvalidOperationException(stage + "進階操作按鈕未完整顯示。");
                 }
             }
         }
@@ -1886,6 +2703,31 @@ namespace NetOptimizerV2
             uiToolTip.SetToolTip(logBox, "右鍵可複製或清除紀錄，也可暫停自動捲動。");
         }
 
+        private void AttachLogToBeginnerDashboard()
+        {
+            if (beginnerDashboard == null || logGroup == null)
+            {
+                return;
+            }
+            if (logGroup.Parent != null)
+            {
+                logGroup.Parent.Controls.Remove(logGroup);
+            }
+            beginnerDashboard.RowCount = 4;
+            while (beginnerDashboard.RowStyles.Count < 4)
+            {
+                beginnerDashboard.RowStyles.Add(new RowStyle(SizeType.Absolute, 0F));
+            }
+            beginnerDashboard.RowStyles[3].SizeType = SizeType.Absolute;
+            beginnerDashboard.RowStyles[3].Height = 0F;
+            logGroup.Dock = DockStyle.Fill;
+            logGroup.Margin = new Padding(0, 8, 0, 0);
+            logGroup.Height = BeginnerInlineLogHeight;
+            beginnerDashboard.Controls.Add(logGroup, 0, 3);
+            beginnerDashboard.SetColumnSpan(logGroup, 2);
+            logGroup.Visible = false;
+        }
+
         private void CopyLog()
         {
             if (logBox == null || string.IsNullOrEmpty(logBox.Text)) { return; }
@@ -1956,7 +2798,10 @@ namespace NetOptimizerV2
 
         private void ApplySettingsToUi()
         {
-            beginnerMode = !settings.BeginnerMode.HasValue || settings.BeginnerMode.Value;
+            // The quick-start surface is the permanent home screen. Advanced
+            // controls open in a separate settings window.
+            beginnerMode = true;
+            advancedDrawerOpen = false;
             InterfaceSnapshot backupSnapshot = NetworkInfo.GetInterfaceSnapshot(settings.BackupInterface);
             bool backupReady = backupSnapshot != null && backupSnapshot.IsReady;
             bool failoverWasDisabled = settings.FailoverEnabled && !backupReady;
@@ -2023,7 +2868,15 @@ namespace NetOptimizerV2
 
         private void SyncBeginnerSettingsToAdvanced()
         {
-            if (!beginnerMode || beginnerPrimaryInterfaceBox == null) { return; }
+            SyncBeginnerSettingsToAdvanced(false);
+        }
+
+        private void SyncBeginnerSettingsToAdvanced(bool force)
+        {
+            if (!beginnerMode || (!force && advancedDrawerOpen) || beginnerPrimaryInterfaceBox == null)
+            {
+                return;
+            }
             interfaceBox.Text = beginnerPrimaryInterfaceBox.Text.Trim();
             primaryInterfaceBox.Text = beginnerPrimaryInterfaceBox.Text.Trim();
             backupInterfaceBox.Text = beginnerBackupInterfaceBox.Text.Trim();
@@ -2042,9 +2895,12 @@ namespace NetOptimizerV2
 
         private MonitorSettings ReadSettingsFromUi()
         {
-            SyncBeginnerSettingsToAdvanced();
+            if (!settingsDialogOpen)
+            {
+                SyncBeginnerSettingsToAdvanced();
+            }
             MonitorSettings next = settings.Clone();
-            next.BeginnerMode = beginnerMode;
+            next.BeginnerMode = true;
             next.StartWithWindows = startWithWindowsBox != null && startWithWindowsBox.Checked;
             next.InterfaceName = interfaceBox.Text.Trim();
             next.PrimaryInterface = primaryInterfaceBox.Text.Trim();
@@ -2405,10 +3261,39 @@ namespace NetOptimizerV2
             }
 
             if (!TrySaveSettings(showError)) { return false; }
+            if (settings.FailoverEnabled)
+            {
+                InterfaceSnapshot primarySnapshot =
+                    NetworkInfo.GetInterfaceSnapshot(settings.PrimaryInterface);
+                InterfaceSnapshot backupSnapshot =
+                    NetworkInfo.GetInterfaceSnapshot(settings.BackupInterface);
+                if (!FailoverManager.IsReadyPair(primarySnapshot, backupSnapshot))
+                {
+                    string detail = primarySnapshot == null || !primarySnapshot.IsReady
+                        ? L("主要網路尚未就緒")
+                        : (backupSnapshot == null || !backupSnapshot.IsReady
+                            ? L("備援網路尚未就緒")
+                            : L("主線與備援不能是同一張網卡"));
+                    if (backupSnapshot == null || !backupSnapshot.IsReady)
+                    {
+                        DisableFailoverWithoutReadyBackup();
+                        TrySaveSettings(false);
+                    }
+                    string message = L("A/B 自動切換已阻止：") + detail + Environment.NewLine +
+                                     L("請重新偵測網路，確認 A 與 B 都有 IPv4 與 gateway 後再開始。 ");
+                    AppendLog(L("A/B 啟動已阻止：") + detail + "。", true);
+                    if (showError)
+                    {
+                        MessageBox.Show(this, message, L("網路尚未就緒"),
+                                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    return false;
+                }
+            }
             engine.Start(settings);
             monitoringEverStarted = true;
             statusValue.Text = L("狀態：") + L("監測中");
-            statusValue.ForeColor = Accent;
+            statusValue.ForeColor = GetMonitorStatusColor();
             UpdateBeginnerStatus();
             UpdateButtons();
             return true;
@@ -2508,8 +3393,8 @@ namespace NetOptimizerV2
                 }
                 lastProbeSummary = FormatLastProbeSummary();
                 lastProbeValue.Text = L("最近探測：") + lastProbeSummary;
-                statusValue.Text = L("狀態：") + L("監測中") + " · " + L("下次約 ") + e.IntervalMs + " ms";
-                statusValue.ForeColor = result.IsHealthy(settings.ThresholdMs) ? Accent : Warning;
+                statusValue.Text = L("狀態：") + L("監測中");
+                statusValue.ForeColor = GetMonitorStatusColor();
                 UpdateBeginnerStatus();
                 if (uiToolTip != null)
                 {
@@ -2595,50 +3480,113 @@ namespace NetOptimizerV2
 
         private void ToggleUiMode()
         {
-            if (beginnerMode)
+            OpenAdvancedSettingsDialog();
+        }
+
+        private void OpenAdvancedSettingsDialog()
+        {
+            if (settingsDialog != null && !settingsDialog.IsDisposed)
             {
-                SyncBeginnerSettingsToAdvanced();
-                beginnerMode = false;
+                settingsDialog.Activate();
+                return;
+            }
+            if (advancedDrawer == null || contentViewport == null)
+            {
+                return;
+            }
+
+            MonitorSettings originalSettings = settings.Clone();
+            SyncBeginnerSettingsToAdvanced(true);
+            MoveAdvancedControlsToDrawer();
+            advancedDrawerOpen = true;
+            settingsDialogOpen = true;
+            if (monitorGroup != null) { monitorGroup.Visible = true; }
+            if (actionsGroup != null) { actionsGroup.Visible = true; }
+            if (failoverGroup != null) { failoverGroup.Visible = true; }
+
+            AdvancedSettingsDialog dialog = new AdvancedSettingsDialog();
+            settingsDialog = dialog;
+            dialog.UpdateTexts(L("進階設定"), L("儲存設定"), L("取消"));
+            dialog.SaveRequested = delegate { return TrySaveSettings(true); };
+            DialogResult result = DialogResult.None;
+            try
+            {
+                if (advancedDrawer.Parent != null)
+                {
+                    advancedDrawer.Parent.Controls.Remove(advancedDrawer);
+                }
+                dialog.AttachContent(advancedDrawer);
+                result = dialog.ShowDialog(this);
+            }
+            catch (Exception ex)
+            {
+                AppendLog(L("進階設定視窗開啟失敗：") + ex.Message, true);
+            }
+            finally
+            {
+                dialog.DetachContent();
+                if (advancedDrawer.Parent != contentViewport)
+                {
+                    contentViewport.Controls.Add(advancedDrawer);
+                }
+                advancedDrawer.Dock = DockStyle.Right;
+                advancedDrawer.Width = 520;
+                advancedDrawer.Visible = false;
+                settingsDialog = null;
+                settingsDialogOpen = false;
+                advancedDrawerOpen = false;
+                UpdateUiMode();
+                dialog.Dispose();
+            }
+
+            if (result == DialogResult.OK)
+            {
+                SyncAdvancedSettingsToBeginner();
+                UpdateBeginnerStatus();
             }
             else
             {
-                SyncAdvancedSettingsToBeginner();
-                beginnerMode = true;
+                settings = originalSettings;
+                ApplySettingsToUi();
             }
-            UpdateBeginnerStatus();
-            UpdateUiMode();
         }
 
         private void UpdateUiMode()
         {
             if (modeButton != null)
             {
-                modeButton.Text = beginnerMode ? L("顯示進階設定 ▸") : L("切換新手模式");
+                modeButton.Text = L("顯示進階設定 ▸");
                 if (uiToolTip != null)
                 {
-                    uiToolTip.SetToolTip(
-                        modeButton,
-                        beginnerMode ? L("顯示完整監測、刷新、A/B 與 EWMA 設定。") :
-                                        L("回到簡化畫面，只保留一般使用者需要的選項。"));
+                    string modeTooltip = L("開啟進階設定視窗。");
+                    uiToolTip.SetToolTip(modeButton, modeTooltip);
+                    modeButton.AccessibleName = modeButton.Text;
+                    modeButton.AccessibleDescription = modeTooltip;
                 }
             }
-            if (beginnerPanel != null) { beginnerPanel.Visible = beginnerMode; }
-            if (monitorGroup != null) { monitorGroup.Visible = !beginnerMode; }
-            if (actionsGroup != null) { actionsGroup.Visible = !beginnerMode; }
-            if (failoverGroup != null) { failoverGroup.Visible = !beginnerMode; }
-            if (permissionPanel != null) { permissionPanel.Visible = true; }
-            if (logGroup != null) { logGroup.Visible = !beginnerMode || beginnerLogExpanded; }
-            if (footerLayout != null) { footerLayout.Visible = !beginnerMode; }
+            if (beginnerPanel != null) { beginnerPanel.Visible = true; }
+            // Advanced controls remain outside the compact home layout and are
+            // attached to the settings window only while it is open.
+            MoveAdvancedControlsToDrawer();
+            if (monitorGroup != null) { monitorGroup.Visible = false; }
+            if (actionsGroup != null) { actionsGroup.Visible = false; }
+            if (failoverGroup != null) { failoverGroup.Visible = false; }
+            if (logGroup != null) { logGroup.Visible = beginnerLogExpanded; }
+            if (lastProbeValue != null) { lastProbeValue.Visible = true; }
+            UpdateUpdateUi();
+            if (footerLayout != null) { footerLayout.Visible = true; }
+            if (footerActionFlow != null) { footerActionFlow.Visible = false; }
             if (layoutShell != null && layoutShell.RowStyles.Count > 1)
             {
                 RowStyle footerRow = layoutShell.RowStyles[1];
                 footerRow.SizeType = SizeType.Absolute;
-                footerRow.Height = beginnerMode ? 0F : 54F;
+                footerRow.Height = 60F;
             }
             if (beginnerLogButton != null)
             {
                 beginnerLogButton.Text = beginnerLogExpanded ? L("隱藏執行紀錄 ▴") : L("查看執行紀錄 ▸");
             }
+            UpdateBeginnerLogLayout();
             if (layoutRoot != null)
             {
                 layoutRoot.AutoSize = true;
@@ -2652,7 +3600,94 @@ namespace NetOptimizerV2
                 layoutRoot.PerformLayout();
                 PerformLayout();
             }
+            if (advancedDrawer != null && !settingsDialogOpen)
+            {
+                advancedDrawer.Visible = false;
+            }
+            ApplyResponsiveLayout();
             UpdateButtons();
+        }
+
+        private void UpdateBeginnerLogLayout()
+        {
+            if (beginnerDashboard == null || beginnerDashboard.RowStyles.Count < 4 ||
+                logGroup == null)
+            {
+                return;
+            }
+            int rowHeight = beginnerLogExpanded ? BeginnerInlineLogRowHeight : 0;
+            logGroup.Visible = beginnerLogExpanded;
+            logGroup.Height = BeginnerInlineLogHeight;
+            beginnerDashboard.RowStyles[3].SizeType = SizeType.Absolute;
+            beginnerDashboard.RowStyles[3].Height = rowHeight;
+            beginnerDashboard.Height = BeginnerDashboardBaseHeight + rowHeight;
+            if (beginnerPanel != null)
+            {
+                beginnerPanel.Height = BeginnerPanelBaseHeight + rowHeight;
+            }
+            if (!IsHandleCreated || WindowState != FormWindowState.Normal)
+            {
+                return;
+            }
+            if (beginnerLogExpanded && !windowHeightExpandedForLog)
+            {
+                int maximumHeight = Math.Max(ClientSize.Height,
+                    Screen.FromControl(this).WorkingArea.Height - 24);
+                int desiredHeight = Math.Min(maximumHeight,
+                    ClientSize.Height + BeginnerInlineLogRowHeight);
+                if (desiredHeight > ClientSize.Height)
+                {
+                    windowHeightBeforeInlineLog = ClientSize.Height;
+                    windowHeightExpandedForLog = true;
+                    ClientSize = new Size(ClientSize.Width, desiredHeight);
+                }
+            }
+            else if (!beginnerLogExpanded && windowHeightExpandedForLog)
+            {
+                int restoreHeight = Math.Max(400, windowHeightBeforeInlineLog);
+                windowHeightExpandedForLog = false;
+                ClientSize = new Size(ClientSize.Width, restoreHeight);
+            }
+        }
+
+        private void MoveAdvancedControlsToDrawer()
+        {
+            if (advancedDrawerLayout == null || layoutRoot == null ||
+                monitorGroup == null || actionsGroup == null || failoverGroup == null)
+            {
+                return;
+            }
+            if (monitorGroup.Parent == advancedDrawerLayout &&
+                actionsGroup.Parent == advancedDrawerLayout &&
+                failoverGroup.Parent == advancedDrawerLayout)
+            {
+                return;
+            }
+
+            Control[] groups = { monitorGroup, actionsGroup, failoverGroup };
+            foreach (Control group in groups)
+            {
+                if (group.Parent != null) { group.Parent.Controls.Remove(group); }
+                group.Dock = DockStyle.Top;
+                group.Margin = new Padding(0, 0, 0, 8);
+            }
+            advancedDrawerLayout.Controls.Clear();
+            advancedDrawerLayout.RowStyles.Clear();
+            advancedDrawerLayout.RowCount = 0;
+            foreach (Control group in groups)
+            {
+                int row = advancedDrawerLayout.RowCount++;
+                advancedDrawerLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                advancedDrawerLayout.Controls.Add(group, 0, row);
+            }
+            advancedDrawerLayout.PerformLayout();
+        }
+
+        private Color GetMonitorStatusColor()
+        {
+            if (!engine.IsRunning) { return MutedText; }
+            if (!hasProbeResult) { return Warning; }
+            return lastProbeHealthy ? Accent : Error;
         }
 
         private void UpdateBeginnerStatus()
@@ -2664,9 +3699,59 @@ namespace NetOptimizerV2
             bool failoverEnabled = beginnerFailoverBox != null && beginnerFailoverBox.Checked;
 
             bool failoverReady = latestFailoverStatus != null && latestFailoverStatus.Ready;
-            string activeInterface = failoverReady ? (latestFailoverStatus.ActiveInterface ?? string.Empty).Trim() : string.Empty;
-            bool backupIsActive = failoverReady && backup.Length > 0 &&
+            bool failoverActive = latestFailoverStatus != null &&
+                                  !string.IsNullOrWhiteSpace(latestFailoverStatus.ActiveInterface);
+            string activeInterface = failoverActive
+                ? (latestFailoverStatus.ActiveInterface ?? string.Empty).Trim()
+                : string.Empty;
+            List<InterfaceSnapshot> snapshots = NetworkInfo.GetInterfaceSnapshots();
+            bool backupLineReady = backup.Length > 0 && snapshots.Any(delegate(InterfaceSnapshot item)
+            {
+                return item != null && item.IsReady &&
+                       string.Equals(item.Name, backup, StringComparison.OrdinalIgnoreCase);
+            });
+            bool hasReadyBackupOption = snapshots.Any(delegate(InterfaceSnapshot item)
+            {
+                return item != null && item.IsReady &&
+                       !string.Equals(item.Name, primary, StringComparison.OrdinalIgnoreCase);
+            });
+            bool backupHasReadyPath = backupLineReady || hasReadyBackupOption;
+            bool backupIsActive = failoverActive && backupLineReady &&
                                   string.Equals(activeInterface, backup, StringComparison.OrdinalIgnoreCase);
+            bool primaryHealthy = engine.IsRunning && hasProbeResult && lastProbeHealthy;
+            bool primaryFailed = engine.IsRunning && hasProbeResult && !lastProbeHealthy;
+            Color primaryColor = primaryFailed ? Error : (primaryHealthy ? Accent : MutedText);
+
+            if (statusValue != null)
+            {
+                statusValue.ForeColor = GetMonitorStatusColor();
+            }
+
+            if (beginnerPrimaryGlyph != null)
+            {
+                beginnerPrimaryGlyph.GlyphKind = GetNetworkGlyphKind(primary);
+                beginnerPrimaryGlyph.GlyphColor = primaryColor == MutedText ? Accent : primaryColor;
+            }
+            if (beginnerBackupGlyph != null)
+            {
+                beginnerBackupGlyph.GlyphKind = GetNetworkGlyphKind(backup);
+                beginnerBackupGlyph.GlyphColor = !backupHasReadyPath ? DisabledGlyph :
+                    (backupIsActive && latestFailoverStatus != null && latestFailoverStatus.InFailover
+                        ? Warning : Color.FromArgb(60, 170, 255));
+            }
+            if (beginnerPrimarySignal != null)
+            {
+                beginnerPrimarySignal.Level = !hasProbeResult ? 0 :
+                    (lastProbeHealthy ? 4 : 1);
+                beginnerPrimarySignal.ActiveColor = primaryColor == MutedText ? Accent : primaryColor;
+            }
+            if (beginnerPrimaryStatePill != null)
+            {
+                beginnerPrimaryStatePill.Text = !engine.IsRunning ? L("未啟動") :
+                    (!hasProbeResult ? L("等待監測") :
+                     (lastProbeHealthy ? L("正常") : L("異常")));
+                beginnerPrimaryStatePill.StateColor = primaryColor;
+            }
             if (beginnerPrimaryValue != null)
             {
                 beginnerPrimaryValue.Text = activeInterface.Length > 0
@@ -2676,25 +3761,83 @@ namespace NetOptimizerV2
             if (beginnerBackupValue != null)
             {
                 beginnerBackupValue.Text = !failoverEnabled ? L("未啟用") :
-                    (backup.Length == 0 ? L("請選擇備援") :
+                    (!backupLineReady ? L("未設定") :
                      (backupIsActive ? L("目前使用：") + backup : L("待命：") + backup));
             }
 
-            string probeSummary = lastProbeSummary ?? string.Empty;
+            Color backupColor = MutedText;
+            string backupState = !backupLineReady ? (!failoverEnabled ? L("未啟用") : L("未設定")) :
+                (backupIsActive ? L("使用中") : L("待命"));
+            if (backupIsActive)
+            {
+                backupColor = latestFailoverStatus != null && latestFailoverStatus.InFailover
+                    ? Warning : Accent;
+            }
+            else if (failoverEnabled && backupLineReady)
+            {
+                backupColor = Warning;
+            }
+            if (beginnerBackupCard != null)
+            {
+                beginnerBackupCard.Enabled = backupHasReadyPath;
+            }
+            if (beginnerFailoverBox != null)
+            {
+                beginnerFailoverBox.Enabled = backupHasReadyPath && !restoringNetwork;
+            }
+            if (beginnerBackupInterfaceBox != null)
+            {
+                beginnerBackupInterfaceBox.Enabled = backupHasReadyPath;
+            }
+            if (beginnerBackupSignal != null)
+            {
+                beginnerBackupSignal.Level = failoverActive && backupLineReady ? 3 : 0;
+                beginnerBackupSignal.ActiveColor = backupHasReadyPath && backupColor != MutedText
+                    ? backupColor : DisabledGlyph;
+            }
+            if (beginnerBackupStatePill != null)
+            {
+                beginnerBackupStatePill.Text = backupState;
+                beginnerBackupStatePill.StateColor = backupHasReadyPath ? backupColor : MutedText;
+            }
+            if (beginnerPrimaryCard != null)
+            {
+                beginnerPrimaryCard.BorderColor = primaryFailed ? Error :
+                    (primaryHealthy ? Color.FromArgb(20, 166, 157) : Color.FromArgb(54, 91, 111));
+            }
+            if (beginnerBackupCard != null)
+            {
+                beginnerBackupCard.BorderColor = !backupHasReadyPath
+                    ? Color.FromArgb(45, 59, 68)
+                    : (backupIsActive ? Color.FromArgb(20, 166, 157) :
+                       (failoverEnabled ? Color.FromArgb(178, 131, 35) :
+                        Color.FromArgb(54, 91, 111)));
+            }
+
             if (beginnerPrimaryHealthValue != null)
             {
-                beginnerPrimaryHealthValue.Text = probeSummary.Length == 0 ||
-                                                  string.Equals(probeSummary, L("尚未測試"), StringComparison.OrdinalIgnoreCase)
-                    ? L("尚未測試")
-                    : L("最近：") + probeSummary;
-                beginnerPrimaryHealthValue.ForeColor = statusValue == null ? MutedText : statusValue.ForeColor;
+                if (!hasProbeResult)
+                {
+                    beginnerPrimaryHealthValue.Text = L("尚未測試");
+                }
+                else if (lastProbeState == ProbeState.Success)
+                {
+                    beginnerPrimaryHealthValue.Text = L("最新延遲") + "  " + lastProbeLatencyMs + " ms";
+                }
+                else
+                {
+                    beginnerPrimaryHealthValue.Text = lastProbeState == ProbeState.Timeout
+                        ? "timeout" : L("失敗");
+                }
+                beginnerPrimaryHealthValue.ForeColor = primaryColor;
             }
 
             if (beginnerBackupHealthValue != null)
             {
-                string backupHealth = !failoverEnabled ? L("未啟用") : L("等待監測");
-                Color backupColor = MutedText;
-                if (failoverReady && backup.Length > 0)
+                string backupHealth = !backupHasReadyPath ?
+                    (failoverEnabled ? L("未設定") : L("未啟用")) :
+                    (!failoverEnabled ? L("未啟用") : L("等待監測"));
+                if (failoverActive && backupLineReady)
                 {
                     if (backupIsActive)
                     {
@@ -2709,16 +3852,67 @@ namespace NetOptimizerV2
                     {
                         backupHealth = L("健康度：尚未對應");
                     }
-                    backupColor = latestFailoverStatus.InFailover ? Warning : MutedText;
-                }
-                else if (failoverEnabled && backup.Length == 0)
-                {
-                    backupHealth = L("先選擇備援網路");
-                    backupColor = Warning;
                 }
                 beginnerBackupHealthValue.Text = backupHealth;
-                beginnerBackupHealthValue.ForeColor = backupColor;
+                beginnerBackupHealthValue.ForeColor = backupHasReadyPath && backupColor != MutedText
+                    ? backupColor : MutedText;
             }
+        }
+
+        private static NetworkGlyphKind GetNetworkGlyphKind(string interfaceName)
+        {
+            if (string.IsNullOrWhiteSpace(interfaceName))
+            {
+                return NetworkGlyphKind.Unknown;
+            }
+
+            NetworkGlyphKind nameKind = ClassifyNetworkGlyph(
+                NetworkInterfaceType.Unknown, interfaceName);
+            if (nameKind != NetworkGlyphKind.Unknown)
+            {
+                return nameKind;
+            }
+
+            InterfaceSnapshot snapshot = NetworkInfo.GetInterfaceSnapshot(interfaceName);
+            string snapshotName = snapshot == null ? string.Empty : snapshot.Name;
+            string snapshotDescription = snapshot == null ? string.Empty : snapshot.Description;
+            NetworkInterfaceType type = snapshot == null ? NetworkInterfaceType.Unknown : snapshot.Type;
+            return ClassifyNetworkGlyph(type, interfaceName + " " + snapshotName + " " + snapshotDescription);
+        }
+
+        private static NetworkGlyphKind ClassifyNetworkGlyph(
+            NetworkInterfaceType type,
+            string interfaceText)
+        {
+            string typeName = type.ToString();
+            string text = interfaceText ?? string.Empty;
+            if (typeName.IndexOf("Bluetooth", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("Bluetooth", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("藍牙", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return NetworkGlyphKind.Bluetooth;
+            }
+
+            if (typeName.IndexOf("Ethernet", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("Ethernet", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("乙太", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("以太", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("LAN", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return NetworkGlyphKind.Ethernet;
+            }
+
+            if (type == NetworkInterfaceType.Wireless80211 ||
+                text.IndexOf("Wi-Fi", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("WiFi", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("Wireless", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("WLAN", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("無線", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return NetworkGlyphKind.WiFi;
+            }
+
+            return NetworkGlyphKind.Unknown;
         }
 
         private void UpdateActionEnabled()
@@ -2762,22 +3956,27 @@ namespace NetOptimizerV2
             bool running = engine.IsRunning;
             if (startButton != null)
             {
-                startButton.Visible = !beginnerMode;
+                startButton.Visible = advancedDrawerOpen;
                 startButton.Enabled = !running;
             }
             if (stopButton != null)
             {
-                stopButton.Visible = !beginnerMode;
+                stopButton.Visible = advancedDrawerOpen;
                 stopButton.Enabled = running;
             }
-            if (refreshButton != null) { refreshButton.Visible = !beginnerMode; }
-            if (saveButton != null) { saveButton.Visible = !beginnerMode; }
-            if (exportButton != null) { exportButton.Visible = !beginnerMode; }
+            if (refreshButton != null) { refreshButton.Visible = advancedDrawerOpen; }
+            if (saveButton != null) { saveButton.Visible = advancedDrawerOpen; }
+            if (exportButton != null) { exportButton.Visible = advancedDrawerOpen; }
             if (beginnerStartButton != null)
             {
-                beginnerStartButton.Visible = beginnerMode;
+                beginnerStartButton.Visible = true;
                 beginnerStartButton.Text = running ? L("停止自動保護") : L("開始自動保護");
                 beginnerStartButton.Enabled = !restoringNetwork && !exportingDiagnostics;
+                ModernButton modernBeginnerStart = beginnerStartButton as ModernButton;
+                if (modernBeginnerStart != null)
+                {
+                    modernBeginnerStart.Glyph = "shield";
+                }
             }
             if (beginnerDetectButton != null)
             {
@@ -2956,10 +4155,15 @@ namespace NetOptimizerV2
             if (updateLink != null)
             {
                 bool visible = availableUpdate != null;
-                TableLayoutPanel headerActions = updateLink.Parent as TableLayoutPanel;
-                if (headerActions != null && headerActions.ColumnStyles.Count > 1)
+                bool infoVisible = visible || (lastProbeValue != null && lastProbeValue.Visible);
+                if (headerInfoLayout != null && headerInfoLayout.ColumnStyles.Count > 1)
                 {
-                    headerActions.ColumnStyles[1].Width = visible ? 92F : 0F;
+                    headerInfoLayout.ColumnStyles[1].Width = visible ? 92F : 0F;
+                    headerInfoLayout.Visible = infoVisible;
+                    if (headerStatusLayout != null && headerStatusLayout.RowStyles.Count > 1)
+                    {
+                        headerStatusLayout.RowStyles[1].Height = infoVisible ? 20F : 0F;
+                    }
                 }
                 updateLink.Visible = visible;
                 updateLink.Enabled = visible;
@@ -3038,6 +4242,10 @@ namespace NetOptimizerV2
 
         private void MainForm_Resize(object sender, EventArgs e)
         {
+            ApplyWindowShape();
+            LayoutCustomChrome();
+            ApplyResponsiveLayout();
+            UpdateChromeButtons();
             if (WindowState == FormWindowState.Minimized)
             {
                 ShowInTaskbar = false;
@@ -3082,6 +4290,10 @@ namespace NetOptimizerV2
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             closing = true;
+            if (settingsDialog != null && !settingsDialog.IsDisposed)
+            {
+                settingsDialog.Close();
+            }
             if (updateCheckCancellation != null)
             {
                 try { updateCheckCancellation.Cancel(); } catch { }
@@ -3103,13 +4315,102 @@ namespace NetOptimizerV2
 
         private static Panel BeginnerCard(Padding margin)
         {
-            return new Panel
+            return new ModernCard
             {
                 BackColor = PanelBackground,
-                BorderStyle = BorderStyle.FixedSingle,
+                BorderStyle = BorderStyle.None,
                 Dock = DockStyle.Fill,
                 Margin = margin,
-                Padding = new Padding(12, 8, 12, 8)
+                Padding = new Padding(12, 10, 12, 10),
+                BorderColor = Color.FromArgb(54, 91, 111),
+                CornerRadius = 10
+            };
+        }
+
+        private static TableLayoutPanel CardHeaderGrid()
+        {
+            TableLayoutPanel grid = new TableLayoutPanel
+            {
+                ColumnCount = 3,
+                RowCount = 1,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                BackColor = PanelBackground
+            };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42F));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 124F));
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            return grid;
+        }
+
+        private static TableLayoutPanel CardIdentityGrid()
+        {
+            TableLayoutPanel grid = new TableLayoutPanel
+            {
+                ColumnCount = 1,
+                RowCount = 2,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                BackColor = PanelBackground
+            };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 55F));
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 45F));
+            return grid;
+        }
+
+        private static TableLayoutPanel BeginnerHealthGrid(Control signal, Control value)
+        {
+            TableLayoutPanel grid = new TableLayoutPanel
+            {
+                ColumnCount = 3,
+                RowCount = 1,
+                Dock = DockStyle.Fill,
+                AutoSize = false,
+                Height = 42,
+                MinimumSize = new Size(0, 42),
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                BackColor = PanelBackground
+            };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 62F));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1F));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
+            grid.Controls.Add(signal, 0, 0);
+            grid.Controls.Add(new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(63, 91, 108),
+                Margin = new Padding(0, 8, 0, 8)
+            }, 1, 0);
+            value.Margin = new Padding(12, 0, 0, 0);
+            grid.Controls.Add(value, 2, 0);
+            return grid;
+        }
+
+        private static Panel SeparatorPanel()
+        {
+            return new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(48, 76, 92),
+                Margin = new Padding(0)
+            };
+        }
+
+        private static StatePill StatePillOf(string text, Color color)
+        {
+            return new StatePill
+            {
+                Text = text,
+                StateColor = color,
+                Font = new Font("Microsoft JhengHei UI", 8.5F, FontStyle.Bold),
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 10, 0, 10)
             };
         }
 
@@ -3135,7 +4436,7 @@ namespace NetOptimizerV2
 
         private static Label BeginnerCardTitle(string text)
         {
-            Label label = LabelOf(text, 0, 0, 0, 20, 9F, MutedText,
+            Label label = LabelOf(text, 0, 0, 0, 20, 9.5F, MutedText,
                                   FontStyle.Bold, ContentAlignment.MiddleLeft);
             label.Dock = DockStyle.Fill;
             label.AutoEllipsis = true;
@@ -3144,7 +4445,7 @@ namespace NetOptimizerV2
 
         private static GroupBox AutoGroupOf(string text)
         {
-            GroupBox group = new GroupBox
+            GroupBox group = new ModernGroupBox
             {
                 Text = text,
                 ForeColor = TextColor,
@@ -3152,7 +4453,7 @@ namespace NetOptimizerV2
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Dock = DockStyle.Fill,
-                Padding = new Padding(10, 24, 10, 10),
+                Padding = new Padding(14, 28, 14, 12),
                 Margin = new Padding(0, 0, 0, 8)
             };
             Localization.Mark(group, text);
@@ -3267,7 +4568,7 @@ namespace NetOptimizerV2
 
         private static CheckBox CheckBoxText(string text, bool value)
         {
-            CheckBox box = new CheckBox
+            CheckBox box = new ModernCheckBox
             {
                 Text = text,
                 Checked = value,
@@ -3304,10 +4605,10 @@ namespace NetOptimizerV2
         {
             return new ComboBox
             {
-                DropDownStyle = ComboBoxStyle.DropDown,
                 BackColor = Color.FromArgb(17, 18, 20),
                 ForeColor = TextColor,
                 FlatStyle = FlatStyle.Flat,
+                DropDownStyle = ComboBoxStyle.DropDown,
                 AutoCompleteMode = AutoCompleteMode.SuggestAppend,
                 AutoCompleteSource = AutoCompleteSource.ListItems,
                 DropDownWidth = 360,
@@ -3316,20 +4617,63 @@ namespace NetOptimizerV2
             };
         }
 
+        private static ComboBox BeginnerInterfaceBox()
+        {
+            return new ModernComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = Color.FromArgb(17, 18, 20),
+                ForeColor = TextColor,
+                FlatStyle = FlatStyle.Flat,
+                DropDownWidth = 360,
+                Height = 27,
+                MinimumSize = new Size(0, 27)
+            };
+        }
+
         private static Button ButtonOf(string text, int x, int y, int width, int height, bool accent)
+        {
+            Button button = new ModernButton
+            {
+                Text = text,
+                BackColor = accent ? Color.FromArgb(19, 39, 35) : Color.FromArgb(20, 22, 25),
+                ForeColor = accent ? Accent : TextColor,
+            };
+            ModernButton modernButton = button as ModernButton;
+            if (modernButton != null)
+            {
+                modernButton.Accent = accent;
+                modernButton.AccentBorder = accent;
+            }
+            button.SetBounds(x, y, width, height);
+            Localization.Mark(button, text);
+            return button;
+        }
+
+        private static Button ChromeButtonOf(string text, bool close)
         {
             Button button = new Button
             {
                 Text = text,
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                BackColor = Background,
+                ForeColor = TextColor,
                 FlatStyle = FlatStyle.Flat,
-                BackColor = accent ? Color.FromArgb(19, 39, 35) : Color.FromArgb(20, 22, 25),
-                ForeColor = accent ? Accent : TextColor,
-                Cursor = Cursors.Hand,
-                UseCompatibleTextRendering = true
+                Font = new Font("Segoe UI Symbol", close ? 15F : 11F, FontStyle.Regular),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                TabStop = false,
+                UseCompatibleTextRendering = false
             };
-            button.FlatAppearance.BorderColor = accent ? Color.FromArgb(39, 111, 91) : Color.FromArgb(59, 64, 71);
-            button.SetBounds(x, y, width, height);
-            Localization.Mark(button, text);
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = close
+                ? Color.FromArgb(150, 48, 58)
+                : Color.FromArgb(25, 44, 55);
+            button.FlatAppearance.MouseDownBackColor = close
+                ? Color.FromArgb(185, 55, 64)
+                : Color.FromArgb(31, 56, 68);
             return button;
         }
 
@@ -3370,11 +4714,18 @@ namespace NetOptimizerV2
         {
             try
             {
-                Process.Start(new ProcessStartInfo(Application.ExecutablePath)
+                using (Process process = Process.Start(new ProcessStartInfo(Application.ExecutablePath)
                 {
+                    Arguments = "--restart-as-admin",
                     UseShellExecute = true,
                     Verb = "runas"
-                });
+                }))
+                {
+                    if (process == null)
+                    {
+                        throw new InvalidOperationException("無法建立管理員重新啟動程序。");
+                    }
+                }
                 Close();
             }
             catch (Win32Exception)

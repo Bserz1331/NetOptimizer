@@ -7,6 +7,10 @@
 - Fixed beginner-mode failover safety: if no second ready backup interface (`IsReady`) is detected, automatic backup switching is disabled by default.
 - The same guard applies at startup when a previously configured backup is not currently ready; EWMA smart routing is disabled with it.
 - Added localized warning/prompt and UI regression coverage for no-ready-backup states.
+- Embedded the modern UI icon set as scalable SVG resources so the EXE uses the
+  network, status, action, language, support, and elevation icons without
+  requiring loose asset files beside the program; the previous drawing path is
+  retained as a fallback.
 - Continued background GitHub update checks, system-tray operation, and bounded network actions.
 
 ## Safety notes
@@ -19,5 +23,5 @@
 ## Validation
 
 - Local build completed with the .NET Framework compiler; code signing was skipped because no certificate was supplied.
-- Deterministic self-test, failover simulation, Wi-Fi interface probe (2/2), diagnostics, UI layout, GUI startup, update-check, and 5-second soak checks passed.
+- Deterministic self-test, failover simulation, Wi-Fi interface probe (2/2), diagnostics, UI layout, GUI startup, update-check, stability, and 5-second soak checks passed.
 - GitHub Actions workflow includes the update-check self-test.
