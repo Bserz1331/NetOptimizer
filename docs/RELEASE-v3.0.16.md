@@ -70,4 +70,4 @@
   visual regression of the Bluetooth glyph without changing user settings.
 - The single-instance self-test covers immediate duplicate rejection and
   successful mutex handoff after the original owner releases it.
-- This local build is prepared for review; GitHub was not changed in this step.
+- The GitHub Release is published at https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.16 with the runtime ZIP, standalone EXE, PDB, source ZIP, and SHA-256 checksum file.
