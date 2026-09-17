@@ -19,6 +19,9 @@ namespace NetOptimizerV2
         public bool OriginalAutomaticMetric { get; set; }
         public int ManagedPrimaryMetric { get; set; }
         public int ManagedBackupMetric { get; set; }
+        // New journals record the metric assigned to this specific interface.
+        // Older journals leave this at zero and use the legacy pair-level guard.
+        public int ManagedMetric { get; set; }
     }
 
     internal sealed class RecoveryReport

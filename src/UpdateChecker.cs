@@ -85,6 +85,7 @@ namespace NetOptimizerV2
     internal static class UpdateStateStore
     {
         private static readonly XmlSerializer Serializer = new XmlSerializer(typeof(UpdateState));
+        private static readonly object Sync = new object();
 
         public static string StatePath
         {
@@ -94,30 +95,39 @@ namespace NetOptimizerV2
         public static UpdateState Load(out string warning)
         {
             warning = null;
-            try
+            lock (Sync)
             {
-                if (!File.Exists(StatePath))
+                try
+                {
+                    using (FileStream stream = new FileStream(
+                        StatePath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        UpdateState state = (UpdateState)Serializer.Deserialize(stream);
+                        if (state == null)
+                        {
+                            warning = "更新狀態檔是空的，已改用預設值。";
+                            return new UpdateState();
+                        }
+                        state.Normalize();
+                        return state;
+                    }
+                }
+                catch (FileNotFoundException)
                 {
                     return new UpdateState();
                 }
-
-                using (FileStream stream = new FileStream(
-                    StatePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                catch (DirectoryNotFoundException)
                 {
-                    UpdateState state = (UpdateState)Serializer.Deserialize(stream);
-                    if (state == null)
-                    {
-                        warning = "更新狀態檔是空的，已改用預設值。";
-                        return new UpdateState();
-                    }
-                    state.Normalize();
-                    return state;
+                    return new UpdateState();
                 }
-            }
-            catch (Exception ex)
-            {
-                warning = "讀取更新狀態失敗，已改用預設值：" + ex.Message;
-                return new UpdateState();
+                catch (Exception ex)
+                {
+                    warning = "讀取更新狀態失敗，已改用預設值：" + ex.Message;
+                    return new UpdateState();
+                }
             }
         }
 
@@ -125,51 +135,64 @@ namespace NetOptimizerV2
         {
             if (state == null) { throw new ArgumentNullException("state"); }
             state.Normalize();
-            Directory.CreateDirectory(SettingsStore.SettingsDirectory);
-            string tempPath = StatePath + ".tmp";
+            UpdateState snapshot = new UpdateState
+            {
+                LastSuccessfulCheckUtc = state.LastSuccessfulCheckUtc,
+                LastNotifiedVersion = state.LastNotifiedVersion,
+                IgnoredVersion = state.IgnoredVersion
+            };
+            snapshot.Normalize();
+
+            lock (Sync)
+            {
+                Directory.CreateDirectory(SettingsStore.SettingsDirectory);
+                string tempPath = StatePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    using (FileStream stream = new FileStream(
+                        tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        Serializer.Serialize(stream, snapshot);
+                    }
+
+                    CommitTempFile(tempPath, StatePath);
+                }
+                finally
+                {
+                    if (File.Exists(tempPath))
+                    {
+                        try { File.Delete(tempPath); } catch { }
+                    }
+                }
+            }
+        }
+
+        private static void CommitTempFile(string tempPath, string targetPath)
+        {
+            if (!File.Exists(targetPath))
+            {
+                try
+                {
+                    File.Move(tempPath, targetPath);
+                    return;
+                }
+                catch (IOException)
+                {
+                    if (!File.Exists(targetPath)) { throw; }
+                }
+            }
 
             try
             {
-                using (FileStream stream = new FileStream(
-                    tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    Serializer.Serialize(stream, state);
-                }
+                File.Replace(tempPath, targetPath, null);
+                return;
+            }
+            catch (PlatformNotSupportedException) { }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
 
-                if (File.Exists(StatePath))
-                {
-                    try
-                    {
-                        File.Replace(tempPath, StatePath, null);
-                    }
-                    catch (PlatformNotSupportedException)
-                    {
-                        File.Copy(tempPath, StatePath, true);
-                        File.Delete(tempPath);
-                    }
-                    catch (IOException)
-                    {
-                        File.Copy(tempPath, StatePath, true);
-                        File.Delete(tempPath);
-                    }
-                    catch (UnauthorizedAccessException)
-                    {
-                        File.Copy(tempPath, StatePath, true);
-                        File.Delete(tempPath);
-                    }
-                }
-                else
-                {
-                    File.Move(tempPath, StatePath);
-                }
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                {
-                    try { File.Delete(tempPath); } catch { }
-                }
-            }
+            File.Copy(tempPath, targetPath, true);
+            File.Delete(tempPath);
         }
     }
 
@@ -180,6 +203,8 @@ namespace NetOptimizerV2
         internal const string RepositoryReleaseUrl =
             "https://github.com/Bserz1331/NetOptimizer/releases";
         internal const int RequestTimeoutMs = 5000;
+        private const int MaxResponseBytes = 1024 * 1024;
+        private const int MaxResponseCharacters = 1024 * 1024;
         internal static readonly TimeSpan AutomaticCheckInterval = TimeSpan.FromHours(24);
 
         public static bool ShouldCheck(UpdateState state, bool force, DateTime utcNow)
@@ -201,70 +226,78 @@ namespace NetOptimizerV2
             {
                 return UpdateCheckResult.Failure("Current application version is unavailable.");
             }
+            if (token.IsCancellationRequested)
+            {
+                return UpdateCheckResult.Failure("Update check cancelled.");
+            }
 
-            // .NET Framework versions on older Windows installations may not
-            // select TLS 1.2 by default, while GitHub requires it.
             try
             {
-                ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
-            }
-            catch { }
-
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(RepositoryApiUrl);
-            request.Method = "GET";
-            request.Accept = "application/vnd.github+json";
-            request.UserAgent = "NetOptimizer/" + FormatVersion(currentVersion);
-            request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
-            request.Timeout = RequestTimeoutMs;
-            request.ReadWriteTimeout = RequestTimeoutMs;
-
-            using (CancellationTokenSource timeout = new CancellationTokenSource(RequestTimeoutMs))
-            using (CancellationTokenSource linked =
-                CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token))
-            using (CancellationTokenRegistration abort = linked.Token.Register(delegate
-            {
-                try { request.Abort(); } catch { }
-            }))
-            {
+                // .NET Framework versions on older Windows installations may not
+                // select TLS 1.2 by default, while GitHub requires it.
                 try
                 {
-                    using (HttpWebResponse response =
-                        (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
-                    {
-                        if (response.StatusCode != HttpStatusCode.OK)
-                        {
-                            return UpdateCheckResult.Failure(
-                                "GitHub returned HTTP " + (int)response.StatusCode + ".");
-                        }
+                    ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+                }
+                catch { }
 
-                        using (Stream stream = response.GetResponseStream())
-                        using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(RepositoryApiUrl);
+                request.Method = "GET";
+                request.Accept = "application/vnd.github+json";
+                request.UserAgent = "NetOptimizer/" + FormatVersion(currentVersion);
+                request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+                request.Timeout = RequestTimeoutMs;
+                request.ReadWriteTimeout = RequestTimeoutMs;
+
+                using (CancellationTokenSource timeout = new CancellationTokenSource(RequestTimeoutMs))
+                using (CancellationTokenSource linked =
+                    CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token))
+                using (CancellationTokenRegistration abort = linked.Token.Register(delegate
+                {
+                    try { request.Abort(); } catch { }
+                }))
+                {
+                    try
+                    {
+                        using (HttpWebResponse response =
+                            (HttpWebResponse)await request.GetResponseAsync().ConfigureAwait(false))
                         {
-                            string json = await reader.ReadToEndAsync().ConfigureAwait(false);
-                            return ParseReleaseJson(json, currentVersion);
+                            if (response.StatusCode != HttpStatusCode.OK)
+                            {
+                                return UpdateCheckResult.Failure(
+                                    "GitHub returned HTTP " + (int)response.StatusCode + ".");
+                            }
+                            if (response.ContentLength > MaxResponseBytes)
+                            {
+                                return UpdateCheckResult.Failure("GitHub release response is too large.");
+                            }
+
+                            using (Stream stream = response.GetResponseStream())
+                            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                            {
+                                string json = await ReadResponseBodyAsync(
+                                    reader, linked.Token).ConfigureAwait(false);
+                                return ParseReleaseJson(json, currentVersion);
+                            }
                         }
                     }
-                }
-                catch (WebException ex)
-                {
-                    if (token.IsCancellationRequested)
+                    catch (WebException ex)
                     {
-                        return UpdateCheckResult.Failure("Update check cancelled.");
+                        return FailureForException(ex, token, timeout);
                     }
-                    if (timeout.IsCancellationRequested)
+                    catch (OperationCanceledException ex)
                     {
-                        return UpdateCheckResult.Failure("Update check timed out.");
+                        return FailureForException(ex, token, timeout);
                     }
-                    return UpdateCheckResult.Failure(SummarizeException(ex));
-                }
-                catch (Exception ex)
-                {
-                    if (token.IsCancellationRequested)
+                    catch (Exception ex)
                     {
-                        return UpdateCheckResult.Failure("Update check cancelled.");
+                        return FailureForException(ex, token, timeout);
                     }
-                    return UpdateCheckResult.Failure(SummarizeException(ex));
                 }
+            }
+            catch (Exception ex)
+            {
+                return FailureForException(ex, token, null);
             }
         }
 
@@ -273,6 +306,10 @@ namespace NetOptimizerV2
             if (string.IsNullOrWhiteSpace(json))
             {
                 return UpdateCheckResult.Failure("GitHub returned an empty release response.");
+            }
+            if (currentVersion == null)
+            {
+                return UpdateCheckResult.Failure("Current application version is unavailable.");
             }
 
             try
@@ -285,8 +322,11 @@ namespace NetOptimizerV2
                     payload = (GitHubReleasePayload)serializer.ReadObject(stream);
                 }
 
-                if (payload == null || payload.Draft || payload.Prerelease ||
-                    string.IsNullOrWhiteSpace(payload.TagName))
+                if (payload == null || string.IsNullOrWhiteSpace(payload.TagName))
+                {
+                    return UpdateCheckResult.Failure("GitHub release response is missing a version tag.");
+                }
+                if (payload.Draft || payload.Prerelease)
                 {
                     return UpdateCheckResult.Success(null);
                 }
@@ -358,6 +398,24 @@ namespace NetOptimizerV2
                 throw new InvalidOperationException("更新檢查間隔或手動檢查判斷錯誤。");
             }
 
+            UpdateCheckResult malformed = ParseReleaseJson("{}", new Version(3, 0, 16));
+            if (malformed.Succeeded)
+            {
+                throw new InvalidOperationException("更新檢查器錯誤地接受缺少版本標籤的回應。");
+            }
+
+            using (CancellationTokenSource cancelled = new CancellationTokenSource())
+            {
+                cancelled.Cancel();
+                UpdateCheckResult cancelledResult = CheckAsync(
+                    new Version(3, 0, 16), cancelled.Token).GetAwaiter().GetResult();
+                if (cancelledResult.Succeeded ||
+                    !string.Equals(cancelledResult.Error, "Update check cancelled.", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("更新檢查器取消邊界驗證失敗。");
+                }
+            }
+
             Console.WriteLine("NetOptimizer update checker test: PASS");
         }
 
@@ -415,6 +473,42 @@ namespace NetOptimizerV2
             return string.IsNullOrWhiteSpace(message)
                 ? ex.GetType().Name
                 : ex.GetType().Name + ": " + message;
+        }
+
+        private static UpdateCheckResult FailureForException(
+            Exception ex,
+            CancellationToken token,
+            CancellationTokenSource timeout)
+        {
+            if (token.IsCancellationRequested)
+            {
+                return UpdateCheckResult.Failure("Update check cancelled.");
+            }
+            if (timeout != null && timeout.IsCancellationRequested)
+            {
+                return UpdateCheckResult.Failure("Update check timed out.");
+            }
+            return UpdateCheckResult.Failure(SummarizeException(ex));
+        }
+
+        private static async Task<string> ReadResponseBodyAsync(
+            StreamReader reader,
+            CancellationToken token)
+        {
+            char[] buffer = new char[8192];
+            StringBuilder builder = new StringBuilder();
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                int count = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                if (count == 0) { break; }
+                if (builder.Length > MaxResponseCharacters - count)
+                {
+                    throw new InvalidDataException("GitHub release response is too large.");
+                }
+                builder.Append(buffer, 0, count);
+            }
+            return builder.ToString();
         }
 
         [DataContract]

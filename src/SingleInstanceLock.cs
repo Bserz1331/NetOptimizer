@@ -6,13 +6,30 @@ namespace NetOptimizerV2
     internal sealed class SingleInstanceLock : IDisposable
     {
         private const string MutexName = "Local\\SpaceCat.NetOptimizer";
-        private readonly Mutex mutex;
-        private bool owns;
-
-        private SingleInstanceLock(Mutex mutex)
+        private sealed class Acquisition
         {
-            this.mutex = mutex;
-            owns = true;
+            public readonly string Name;
+            public readonly TimeSpan WaitTimeout;
+            public readonly ManualResetEventSlim Ready = new ManualResetEventSlim(false);
+            public readonly ManualResetEventSlim Release = new ManualResetEventSlim(false);
+            public Mutex Mutex;
+            public Thread OwnerThread;
+            public bool Acquired;
+            public Exception Error;
+
+            public Acquisition(string name, TimeSpan waitTimeout)
+            {
+                Name = name;
+                WaitTimeout = waitTimeout;
+            }
+        }
+
+        private readonly Acquisition acquisition;
+        private int disposed;
+
+        private SingleInstanceLock(Acquisition acquisition)
+        {
+            this.acquisition = acquisition;
         }
 
         public static SingleInstanceLock TryAcquire(out bool acquired)
@@ -31,34 +48,110 @@ namespace NetOptimizerV2
             out bool acquired)
         {
             acquired = false;
-            Mutex mutex = new Mutex(false, name);
+            ValidateWaitTimeout(waitTimeout);
+            Acquisition acquisition = new Acquisition(name, waitTimeout);
+            Thread ownerThread = new Thread(AcquireAndHold);
+            acquisition.OwnerThread = ownerThread;
+            ownerThread.IsBackground = true;
             try
             {
-                bool ownsMutex;
+                ownerThread.Start(acquisition);
+                acquisition.Ready.Wait();
+            }
+            catch
+            {
+                try { acquisition.Release.Set(); } catch { }
+                JoinOwner(acquisition);
+                DisposeSignals(acquisition);
+                throw;
+            }
+
+            if (acquisition.Error != null)
+            {
+                Exception error = acquisition.Error;
+                JoinOwner(acquisition);
+                DisposeSignals(acquisition);
+                throw error;
+            }
+            if (!acquisition.Acquired)
+            {
+                JoinOwner(acquisition);
+                DisposeSignals(acquisition);
+                return null;
+            }
+
+            acquired = true;
+            return new SingleInstanceLock(acquisition);
+        }
+
+        private static void ValidateWaitTimeout(TimeSpan waitTimeout)
+        {
+            if (waitTimeout < TimeSpan.Zero && waitTimeout != Timeout.InfiniteTimeSpan)
+            {
+                throw new ArgumentOutOfRangeException("waitTimeout");
+            }
+            if (waitTimeout > TimeSpan.FromMilliseconds(Int32.MaxValue))
+            {
+                throw new ArgumentOutOfRangeException("waitTimeout");
+            }
+        }
+
+        private static void AcquireAndHold(object value)
+        {
+            Acquisition acquisition = (Acquisition)value;
+            try
+            {
+                acquisition.Mutex = new Mutex(false, acquisition.Name);
                 try
                 {
-                    ownsMutex = mutex.WaitOne(waitTimeout);
+                    acquisition.Acquired = acquisition.Mutex.WaitOne(acquisition.WaitTimeout);
                 }
                 catch (AbandonedMutexException)
                 {
                     // WaitOne transfers ownership to this process after an abandoned mutex.
-                    ownsMutex = true;
+                    acquisition.Acquired = true;
                 }
 
-                if (!ownsMutex)
+                acquisition.Ready.Set();
+                if (acquisition.Acquired)
                 {
-                    mutex.Dispose();
-                    return null;
+                    acquisition.Release.Wait();
                 }
-
-                acquired = true;
-                return new SingleInstanceLock(mutex);
             }
-            catch
+            catch (Exception ex)
             {
-                mutex.Dispose();
-                throw;
+                acquisition.Error = ex;
+                try { acquisition.Ready.Set(); } catch { }
             }
+            finally
+            {
+                if (acquisition.Mutex != null)
+                {
+                    if (acquisition.Acquired)
+                    {
+                        try { acquisition.Mutex.ReleaseMutex(); } catch { }
+                    }
+                    try { acquisition.Mutex.Dispose(); } catch { }
+                    acquisition.Mutex = null;
+                }
+            }
+        }
+
+        private static void JoinOwner(Acquisition acquisition)
+        {
+            if (acquisition == null || acquisition.OwnerThread == null ||
+                Thread.CurrentThread == acquisition.OwnerThread)
+            {
+                return;
+            }
+            try { acquisition.OwnerThread.Join(); } catch { }
+        }
+
+        private static void DisposeSignals(Acquisition acquisition)
+        {
+            if (acquisition == null) { return; }
+            try { acquisition.Ready.Dispose(); } catch { }
+            try { acquisition.Release.Dispose(); } catch { }
         }
 
         internal static void RunSelfTest()
@@ -145,8 +238,26 @@ namespace NetOptimizerV2
                         throw new InvalidOperationException("單一實例鎖交接等待未啟動。");
                     }
 
-                    // Release the first owner before joining so the waiter exercises the real handoff.
-                    first.Dispose();
+                    // Release the first owner from another thread so the waiter exercises
+                    // both the real handoff and cross-thread disposal.
+                    Exception releaseError = null;
+                    Thread releaser = new Thread(delegate()
+                    {
+                        try { first.Dispose(); }
+                        catch (Exception ex) { releaseError = ex; }
+                    });
+                    releaser.IsBackground = true;
+                    releaser.Start();
+                    if (!releaser.Join(3000))
+                    {
+                        throw new InvalidOperationException("單一實例鎖跨執行緒釋放逾時。");
+                    }
+                    if (releaseError != null)
+                    {
+                        throw new InvalidOperationException(
+                            "單一實例鎖跨執行緒釋放發生例外：" + releaseError.Message,
+                            releaseError);
+                    }
                     if (!waiter.Join(3000))
                     {
                         throw new InvalidOperationException("單一實例鎖交接等待逾時。");
@@ -168,10 +279,10 @@ namespace NetOptimizerV2
 
         public void Dispose()
         {
-            if (!owns) { return; }
-            owns = false;
-            try { mutex.ReleaseMutex(); } catch { }
-            mutex.Dispose();
+            if (Interlocked.Exchange(ref disposed, 1) != 0) { return; }
+            try { acquisition.Release.Set(); } catch { }
+            JoinOwner(acquisition);
+            DisposeSignals(acquisition);
         }
     }
 }

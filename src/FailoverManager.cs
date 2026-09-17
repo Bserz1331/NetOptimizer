@@ -37,6 +37,11 @@ namespace NetOptimizerV2
             }
 
             report.FoundJournal = true;
+            if (!NetworkInfo.IsAdministrator())
+            {
+                report.Messages.Add("目前不是系統管理員，未嘗試寫入 recovery journal 內的 InterfaceMetric。 ");
+                return report;
+            }
             bool allRestored = true;
             foreach (MetricRecoveryEntry entry in journal.Entries)
             {
@@ -111,8 +116,21 @@ namespace NetOptimizerV2
             return report;
         }
 
-        public async Task RunAsync(MonitorSettings settings, CancellationToken token)
+        public async Task RunAsync(MonitorSettings sourceSettings, CancellationToken token)
         {
+            if (sourceSettings == null)
+            {
+                Write("A/B 切換未啟動：沒有收到設定。", true);
+                return;
+            }
+
+            MonitorSettings settings = sourceSettings.Clone();
+            settings.Normalize();
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
             string primaryName = (settings.PrimaryInterface ?? string.Empty).Trim();
             string backupName = (settings.BackupInterface ?? string.Empty).Trim();
             if (primaryName.Length == 0 || backupName.Length == 0)
@@ -132,6 +150,18 @@ namespace NetOptimizerV2
                 Write("A/B 切換未啟動：沒有指定故障切換測試目標。", true);
                 return;
             }
+            if (settings.FailoverPrimaryMetric >= settings.FailoverBackupMetric)
+            {
+                Write("A/B 切換未啟動：A metric 必須小於 B metric。", true);
+                PublishNotReadyStatus(settings, "A metric 必須小於 B metric，未套用任何變更。");
+                return;
+            }
+            if (!NetworkInfo.IsAdministrator())
+            {
+                Write("A/B 切換未啟動：目前不是系統管理員，未嘗試寫入 InterfaceMetric。", true);
+                PublishNotReadyStatus(settings, "需要系統管理員權限才能安全套用 A/B InterfaceMetric。");
+                return;
+            }
 
             InterfaceSnapshot primarySnapshot = NetworkInfo.GetInterfaceSnapshot(primaryName);
             InterfaceSnapshot backupSnapshot = NetworkInfo.GetInterfaceSnapshot(backupName);
@@ -146,6 +176,16 @@ namespace NetOptimizerV2
                 string detail = DescribePairReadiness(primarySnapshot, backupSnapshot);
                 Write("A/B 切換未啟動：A 與 B 必須都是 IsReady（" + detail + "）。", true);
                 PublishNotReadyStatus(settings, "A 與 B 必須都是 IsReady；" + detail);
+                return;
+            }
+
+            primaryName = (primarySnapshot.Name ?? string.Empty).Trim();
+            backupName = (backupSnapshot.Name ?? string.Empty).Trim();
+            if (primaryName.Length == 0 || backupName.Length == 0 ||
+                string.Equals(primaryName, backupName, StringComparison.OrdinalIgnoreCase))
+            {
+                Write("A/B 切換未啟動：無法解析兩張不同的 Windows 介面 alias。", true);
+                PublishNotReadyStatus(settings, "無法解析兩張不同的 Windows 介面 alias。");
                 return;
             }
 
@@ -187,6 +227,7 @@ namespace NetOptimizerV2
                         InterfaceName = primaryName,
                         OriginalMetric = primaryState.Metric,
                         OriginalAutomaticMetric = primaryState.AutomaticMetric,
+                        ManagedMetric = settings.FailoverPrimaryMetric,
                         ManagedPrimaryMetric = settings.FailoverPrimaryMetric,
                         ManagedBackupMetric = settings.FailoverBackupMetric
                     },
@@ -195,6 +236,7 @@ namespace NetOptimizerV2
                         InterfaceName = backupName,
                         OriginalMetric = backupState.Metric,
                         OriginalAutomaticMetric = backupState.AutomaticMetric,
+                        ManagedMetric = settings.FailoverBackupMetric,
                         ManagedPrimaryMetric = settings.FailoverPrimaryMetric,
                         ManagedBackupMetric = settings.FailoverBackupMetric
                     }
@@ -211,7 +253,6 @@ namespace NetOptimizerV2
                 return;
             }
 
-            bool mayHaveChanged = true;
             bool ready = false;
             try
             {
@@ -250,14 +291,21 @@ namespace NetOptimizerV2
                 Write("A/B 切換停止：" + ex.Message, true);
             }
 
-            if (mayHaveChanged)
+            bool restored = false;
+            try
             {
-                bool restored = await RestoreOriginalAsync(primaryState, backupState).ConfigureAwait(false);
+                restored = await RestoreOriginalAsync(
+                    primaryState,
+                    backupState,
+                    settings).ConfigureAwait(false);
                 if (restored)
                 {
                     try
                     {
-                        RecoveryStore.Clear();
+                        if (!ClearOwnedRecoveryJournal(journal))
+                        {
+                            Write("A/B 已復原，但 recovery journal 所有權已改變，保留目前 journal。", true);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -269,11 +317,19 @@ namespace NetOptimizerV2
                     Write("A/B 原始 metric 尚未全部確認復原；下次啟動會再次嘗試。", true);
                 }
             }
+            catch (Exception ex)
+            {
+                Write("A/B 復原發生錯誤，保留 recovery journal：" + ex.Message, true);
+            }
             PublishStatus(new FailoverStatus
             {
                 Ready = false,
                 SmartSelection = settings.SmartSelectionEnabled,
-                Detail = ready ? "A/B 監測已停止，已完成復原嘗試。" : "A/B 監測未進入工作狀態。"
+                Detail = ready
+                    ? (restored
+                        ? "A/B 監測已停止，已完成復原。"
+                        : "A/B 監測已停止，但原始 metric 尚未全部確認復原。")
+                    : "A/B 監測未進入工作狀態。"
             });
         }
 
@@ -303,6 +359,7 @@ namespace NetOptimizerV2
                 if (lastActive.Cancelled) { break; }
 
                 AddStatistics(statistics, policy.ActiveInterface, lastActive, settings);
+                now = DateTime.UtcNow;
 
                 if (policy.InFailover)
                 {
@@ -310,6 +367,7 @@ namespace NetOptimizerV2
                         .ConfigureAwait(false);
                     if (lastStandby.Cancelled) { break; }
                     AddStatistics(statistics, policy.StandbyInterface, lastStandby, settings);
+                    now = DateTime.UtcNow;
 
                     bool recoveryReady = policy.ObserveRecovery(
                         lastStandby.Healthy,
@@ -317,7 +375,7 @@ namespace NetOptimizerV2
                         settings.FailoverRecoverySeconds);
                     if (recoveryReady)
                     {
-                        if (SwitchBudgetAvailable(switchHistory, settings))
+                        if (SwitchBudgetAvailable(switchHistory, settings, now))
                         {
                             bool switched = await SwitchPairAsync(
                                 policy.StandbyInterface,
@@ -326,12 +384,14 @@ namespace NetOptimizerV2
                                 token).ConfigureAwait(false);
                             if (switched)
                             {
+                                DateTime switchUtc = DateTime.UtcNow;
                                 policy.MarkSwitchSuccess(
-                                    now,
+                                    switchUtc,
                                     settings.FailoverSwitchCooldownSeconds,
                                     false,
                                     "主線恢復切回");
-                                switchHistory.Add(now);
+                                switchHistory.Add(switchUtc);
+                                SwapHealth(ref lastActive, ref lastStandby);
                                 recoveryReported = false;
                                 badReported = false;
                                 Write("A 已穩定 " + settings.FailoverRecoverySeconds +
@@ -339,13 +399,17 @@ namespace NetOptimizerV2
                             }
                             else
                             {
-                                policy.MarkSwitchFailure(now, settings.FailoverSwitchBackoffSeconds);
+                                policy.MarkSwitchFailure(
+                                    DateTime.UtcNow,
+                                    settings.FailoverSwitchBackoffSeconds);
                             }
                         }
                         else
                         {
                             Write("A 已恢復，但已達每小時切換上限，暫停自動切換。", true);
-                            policy.MarkSwitchFailure(now, settings.FailoverSwitchBackoffSeconds);
+                            policy.MarkSwitchFailure(
+                                DateTime.UtcNow,
+                                settings.FailoverSwitchBackoffSeconds);
                         }
                     }
                     else if (lastStandby.Healthy && !recoveryReported)
@@ -371,12 +435,13 @@ namespace NetOptimizerV2
                             badReported = true;
                         }
 
-                        if (policy.ShouldFailover(now, settings.FailoverBadSamples))
+                        if (policy.ShouldFailover(DateTime.UtcNow, settings.FailoverBadSamples))
                         {
                             lastStandby = await MeasureLinkAsync(policy.StandbyInterface, settings, token)
                                 .ConfigureAwait(false);
                             if (lastStandby.Cancelled) { break; }
                             AddStatistics(statistics, policy.StandbyInterface, lastStandby, settings);
+                            now = DateTime.UtcNow;
 
                             if (!lastStandby.Healthy)
                             {
@@ -385,12 +450,16 @@ namespace NetOptimizerV2
                                     Write("A 異常，但 B 尚未通過健康檢查（" + lastStandby.Display + "）。", true);
                                     standbyReported = true;
                                 }
-                                policy.MarkSwitchFailure(now, settings.FailoverSwitchBackoffSeconds);
+                                policy.MarkSwitchFailure(
+                                    DateTime.UtcNow,
+                                    settings.FailoverSwitchBackoffSeconds);
                             }
-                            else if (!SwitchBudgetAvailable(switchHistory, settings))
+                            else if (!SwitchBudgetAvailable(switchHistory, settings, now))
                             {
                                 Write("A 異常，但已達每小時切換上限，維持現有路由。", true);
-                                policy.MarkSwitchFailure(now, settings.FailoverSwitchBackoffSeconds);
+                                policy.MarkSwitchFailure(
+                                    DateTime.UtcNow,
+                                    settings.FailoverSwitchBackoffSeconds);
                             }
                             else
                             {
@@ -401,12 +470,14 @@ namespace NetOptimizerV2
                                     token).ConfigureAwait(false);
                                 if (switched)
                                 {
-                                        policy.MarkSwitchSuccess(
-                                            now,
-                                            settings.FailoverSwitchCooldownSeconds,
-                                            true,
-                                            "故障切換");
-                                    switchHistory.Add(now);
+                                    DateTime switchUtc = DateTime.UtcNow;
+                                    policy.MarkSwitchSuccess(
+                                        switchUtc,
+                                        settings.FailoverSwitchCooldownSeconds,
+                                        true,
+                                        "故障切換");
+                                    switchHistory.Add(switchUtc);
+                                    SwapHealth(ref lastActive, ref lastStandby);
                                     badReported = false;
                                     standbyReported = false;
                                     recoveryReported = false;
@@ -416,7 +487,9 @@ namespace NetOptimizerV2
                                 }
                                 else
                                 {
-                                    policy.MarkSwitchFailure(now, settings.FailoverSwitchBackoffSeconds);
+                                    policy.MarkSwitchFailure(
+                                        DateTime.UtcNow,
+                                        settings.FailoverSwitchBackoffSeconds);
                                 }
                             }
                         }
@@ -433,6 +506,7 @@ namespace NetOptimizerV2
                                     .ConfigureAwait(false);
                                 if (lastStandby.Cancelled) { break; }
                                 AddStatistics(statistics, policy.StandbyInterface, lastStandby, settings);
+                                now = DateTime.UtcNow;
                                 nextSmartProbeUtc = now.AddMilliseconds(settings.SmartProbeIntervalMs);
                             }
 
@@ -445,7 +519,7 @@ namespace NetOptimizerV2
                                     statistics.TryGetValue(policy.ActiveInterface, out activeStats) &&
                                     statistics.TryGetValue(policy.StandbyInterface, out standbyStats) &&
                                     standbyStats.HasSample && activeStats.HasSample &&
-                                    SwitchBudgetAvailable(switchHistory, settings) &&
+                                    SwitchBudgetAvailable(switchHistory, settings, now) &&
                                     policy.ShouldSmartSwitch(
                                         now,
                                         activeStats.Score(settings.FailoverPingTimeoutMs),
@@ -461,20 +535,24 @@ namespace NetOptimizerV2
                                         token).ConfigureAwait(false);
                                     if (switched)
                                     {
+                                        DateTime switchUtc = DateTime.UtcNow;
                                         policy.MarkSwitchSuccess(
-                                            now,
+                                            switchUtc,
                                             settings.FailoverSwitchCooldownSeconds,
                                             false,
                                             "智慧選路");
-                                        switchHistory.Add(now);
+                                        switchHistory.Add(switchUtc);
+                                        SwapHealth(ref lastActive, ref lastStandby);
                                         nextSmartProbeUtc = DateTime.MinValue;
-                                        nextSmartDecisionUtc = now.AddSeconds(settings.SmartDecisionIntervalSeconds);
+                                        nextSmartDecisionUtc = switchUtc.AddSeconds(settings.SmartDecisionIntervalSeconds);
                                         Write("智慧選路：" + policy.ActiveInterface +
                                               " 的健康分數優於原線路，已切換。", false);
                                     }
                                     else
                                     {
-                                        policy.MarkSwitchFailure(now, settings.FailoverSwitchBackoffSeconds);
+                                        policy.MarkSwitchFailure(
+                                            DateTime.UtcNow,
+                                            settings.FailoverSwitchBackoffSeconds);
                                     }
                                 }
                             }
@@ -498,17 +576,14 @@ namespace NetOptimizerV2
             {
                 return LinkHealth.Unhealthy(interfaceName, "找不到網卡");
             }
-            if (snapshot.Status != System.Net.NetworkInformation.OperationalStatus.Up)
+            if (!snapshot.IsReady)
             {
-                return LinkHealth.Unhealthy(interfaceName, "介面狀態為 " + snapshot.Status);
-            }
-            if (string.IsNullOrWhiteSpace(snapshot.IPv4))
-            {
-                return LinkHealth.Unhealthy(interfaceName, "沒有可用 IPv4");
-            }
-            if (string.IsNullOrWhiteSpace(snapshot.Gateway))
-            {
-                return LinkHealth.Unhealthy(interfaceName, "沒有 IPv4 預設閘道");
+                string detail = snapshot.Status != System.Net.NetworkInformation.OperationalStatus.Up
+                    ? "介面狀態為 " + snapshot.Status
+                    : (string.IsNullOrWhiteSpace(snapshot.IPv4)
+                        ? "沒有可用 IPv4"
+                        : "沒有 IPv4 預設閘道");
+                return LinkHealth.Unhealthy(interfaceName, detail);
             }
 
             List<string> targets = GetTargets(settings);
@@ -591,13 +666,8 @@ namespace NetOptimizerV2
                     return false;
                 }
 
-                InterfaceSnapshot primarySnapshot = NetworkInfo.GetInterfaceSnapshot(primary);
-                InterfaceSnapshot backupSnapshot = NetworkInfo.GetInterfaceSnapshot(backup);
-                if (!IsReadyPair(primarySnapshot, backupSnapshot))
+                if (!CheckReadyPairNow(primary, backup, "初始化套用 metric 前"))
                 {
-                    string detail = DescribePairReadiness(primarySnapshot, backupSnapshot);
-                    Write("A/B 初始化取消：套用 metric 前 A/B 已不再同時就緒（" +
-                          detail + "）。", true);
                     return false;
                 }
 
@@ -610,7 +680,19 @@ namespace NetOptimizerV2
                     primaryResult,
                     token).ConfigureAwait(false))
                 {
-                    await RollbackOriginalPairAsync(originalPrimary, originalBackup).ConfigureAwait(false);
+                    await RollbackOriginalPairAsync(
+                        originalPrimary,
+                        originalBackup,
+                        settings).ConfigureAwait(false);
+                    return false;
+                }
+
+                if (!CheckReadyPairNow(primary, backup, "初始化套用 B metric 前"))
+                {
+                    await RollbackOriginalPairAsync(
+                        originalPrimary,
+                        originalBackup,
+                        settings).ConfigureAwait(false);
                     return false;
                 }
 
@@ -623,14 +705,32 @@ namespace NetOptimizerV2
                     backupResult,
                     token).ConfigureAwait(false))
                 {
-                    await RollbackOriginalPairAsync(originalPrimary, originalBackup).ConfigureAwait(false);
+                    await RollbackOriginalPairAsync(
+                        originalPrimary,
+                        originalBackup,
+                        settings).ConfigureAwait(false);
                     return false;
                 }
 
-                bool routeOk = await ReportRouteVerificationAsync(primary, token).ConfigureAwait(false);
+                if (!CheckReadyPairNow(primary, backup, "初始化路由驗證前"))
+                {
+                    await RollbackOriginalPairAsync(
+                        originalPrimary,
+                        originalBackup,
+                        settings).ConfigureAwait(false);
+                    return false;
+                }
+
+                bool routeOk = await ReportRouteVerificationAsync(
+                    primary,
+                    settings.FailoverPrimaryMetric,
+                    token).ConfigureAwait(false);
                 if (!routeOk)
                 {
-                    await RollbackOriginalPairAsync(originalPrimary, originalBackup).ConfigureAwait(false);
+                    await RollbackOriginalPairAsync(
+                        originalPrimary,
+                        originalBackup,
+                        settings).ConfigureAwait(false);
                 }
                 return routeOk;
             }
@@ -659,14 +759,8 @@ namespace NetOptimizerV2
                     return false;
                 }
 
-                InterfaceSnapshot candidateSnapshot = NetworkInfo.GetInterfaceSnapshot(newPrimary);
-                InterfaceSnapshot existingSnapshot = NetworkInfo.GetInterfaceSnapshot(newBackup);
-                if (!IsReadySwitchCandidate(candidateSnapshot, existingSnapshot))
+                if (!CheckReadySwitchCandidateNow(newPrimary, newBackup, "切換主線 metric 前"))
                 {
-                    string detail = candidateSnapshot == null || !candidateSnapshot.IsReady
-                        ? "候選主線尚未就緒"
-                        : "原主線介面已不存在";
-                    Write("A/B 切換取消：" + detail + "，不會改動 metric。", true);
                     return false;
                 }
 
@@ -679,8 +773,18 @@ namespace NetOptimizerV2
                     primary,
                     token).ConfigureAwait(false))
                 {
-                    await RollbackManagedPairAsync(newPrimary, newBackup, settings).ConfigureAwait(false);
-                    return false;
+                    return await RollbackSwitchOrThrowAsync(
+                        newPrimary,
+                        newBackup,
+                        settings).ConfigureAwait(false);
+                }
+
+                if (!CheckReadySwitchCandidateNow(newPrimary, newBackup, "切換備援 metric 前"))
+                {
+                    return await RollbackSwitchOrThrowAsync(
+                        newPrimary,
+                        newBackup,
+                        settings).ConfigureAwait(false);
                 }
 
                 CommandResult backup = await NetworkInfo.SetInterfaceMetricAsync(
@@ -693,14 +797,30 @@ namespace NetOptimizerV2
                     token).ConfigureAwait(false))
                 {
                     Write("備援 metric 設定失敗，保留目前 metric 並等待退避重試。", true);
-                    await RollbackManagedPairAsync(newPrimary, newBackup, settings).ConfigureAwait(false);
-                    return false;
+                    return await RollbackSwitchOrThrowAsync(
+                        newPrimary,
+                        newBackup,
+                        settings).ConfigureAwait(false);
                 }
 
-                bool routeOk = await ReportRouteVerificationAsync(newPrimary, token).ConfigureAwait(false);
+                if (!CheckReadySwitchCandidateNow(newPrimary, newBackup, "切換路由驗證前"))
+                {
+                    return await RollbackSwitchOrThrowAsync(
+                        newPrimary,
+                        newBackup,
+                        settings).ConfigureAwait(false);
+                }
+
+                bool routeOk = await ReportRouteVerificationAsync(
+                    newPrimary,
+                    settings.FailoverPrimaryMetric,
+                    token).ConfigureAwait(false);
                 if (!routeOk)
                 {
-                    await RollbackManagedPairAsync(newPrimary, newBackup, settings).ConfigureAwait(false);
+                    return await RollbackSwitchOrThrowAsync(
+                        newPrimary,
+                        newBackup,
+                        settings).ConfigureAwait(false);
                 }
                 return routeOk;
             }
@@ -736,45 +856,97 @@ namespace NetOptimizerV2
             return true;
         }
 
-        private async Task RollbackManagedPairAsync(
-            string oldStandby,
-            string oldActive,
+        private async Task<bool> RollbackSwitchOrThrowAsync(
+            string switchedInterface,
+            string previousActive,
+            MonitorSettings settings)
+        {
+            bool rolledBack = await RollbackManagedPairAsync(
+                switchedInterface,
+                previousActive,
+                settings).ConfigureAwait(false);
+            if (!rolledBack)
+            {
+                throw new InvalidOperationException(
+                    "A/B 部分切換 rollback 無法完成或驗證，已停止監測。 ");
+            }
+            return false;
+        }
+
+        private async Task<bool> RollbackManagedPairAsync(
+            string switchedInterface,
+            string previousActive,
             MonitorSettings settings)
         {
             try
             {
-                CommandResult standby = await NetworkInfo.SetInterfaceMetricAsync(
-                    oldStandby,
+                CommandResult switched = await NetworkInfo.SetInterfaceMetricAsync(
+                    switchedInterface,
                     settings.FailoverBackupMetric,
                     false,
                     CancellationToken.None).ConfigureAwait(false);
+                bool switchedOk = await ReportAndVerifyMetricAsync(
+                    "rollback " + switchedInterface + " metric=" + settings.FailoverBackupMetric,
+                    switchedInterface,
+                    settings.FailoverBackupMetric,
+                    switched,
+                    CancellationToken.None).ConfigureAwait(false);
+
                 CommandResult active = await NetworkInfo.SetInterfaceMetricAsync(
-                    oldActive,
+                    previousActive,
                     settings.FailoverPrimaryMetric,
                     false,
                     CancellationToken.None).ConfigureAwait(false);
-                if (standby == null || !standby.Succeeded || active == null || !active.Succeeded)
+                bool activeOk = await ReportAndVerifyMetricAsync(
+                    "rollback " + previousActive + " metric=" + settings.FailoverPrimaryMetric,
+                    previousActive,
+                    settings.FailoverPrimaryMetric,
+                    active,
+                    CancellationToken.None).ConfigureAwait(false);
+                if (!switchedOk || !activeOk)
                 {
                     Write("A/B 部分切換失敗，rollback metric 也未完全成功。", true);
+                    return false;
                 }
-                else
+
+                InterfaceSnapshot previousActiveSnapshot =
+                    NetworkInfo.GetInterfaceSnapshot(previousActive);
+                if (previousActiveSnapshot != null && previousActiveSnapshot.IsReady &&
+                    !await ReportRouteVerificationAsync(
+                        previousActive,
+                        settings.FailoverPrimaryMetric,
+                        CancellationToken.None).ConfigureAwait(false))
                 {
-                    Write("A/B 部分切換已 rollback。", false);
+                    Write("A/B rollback 的 metric 已驗證，但原主線 route 仍無法驗證；停止監測。", true);
+                    return false;
                 }
+                if (previousActiveSnapshot == null || !previousActiveSnapshot.IsReady)
+                {
+                    Write("A/B rollback 的 metric 已驗證；原主線尚未 IsReady，暫不判定 route。", true);
+                }
+
+                Write(previousActiveSnapshot != null && previousActiveSnapshot.IsReady
+                    ? "A/B 部分切換已 rollback 並通過 route 驗證。"
+                    : "A/B 部分切換已 rollback 並完成 metric 驗證。", false);
+                return true;
             }
             catch (Exception ex)
             {
                 Write("A/B rollback 發生錯誤：" + ex.Message, true);
+                return false;
             }
         }
 
         private async Task<bool> RollbackOriginalPairAsync(
             InterfaceMetricState originalPrimary,
-            InterfaceMetricState originalBackup)
+            InterfaceMetricState originalBackup,
+            MonitorSettings settings)
         {
-            bool primaryOk = await RestoreMetricAsync(originalPrimary).ConfigureAwait(false);
-            bool backupOk = await RestoreMetricAsync(originalBackup).ConfigureAwait(false);
-            if (primaryOk && backupOk)
+            bool restored = await RestoreOriginalPairIfSafeAsync(
+                originalPrimary,
+                originalBackup,
+                settings).ConfigureAwait(false);
+            if (restored)
             {
                 Write("A/B 初始套用失敗，已依原始 metric 完成 rollback。", false);
             }
@@ -782,13 +954,21 @@ namespace NetOptimizerV2
             {
                 Write("A/B 初始套用失敗，原始 metric 尚未全部復原。", true);
             }
-            return primaryOk && backupOk;
+            return restored;
         }
 
         private async Task<bool> ReportRouteVerificationAsync(
             string expectedInterface,
+            int expectedInterfaceMetric,
             CancellationToken token)
         {
+            InterfaceSnapshot expectedSnapshot = NetworkInfo.GetInterfaceSnapshot(expectedInterface);
+            if (expectedSnapshot == null || !expectedSnapshot.IsReady)
+            {
+                Write("路由驗證取消：預期介面已不再 IsReady；為避免誤判，A/B 不會視為已就緒。", true);
+                return false;
+            }
+
             DefaultRouteState route = await NetworkInfo.ReadPreferredDefaultRouteAsync(token)
                 .ConfigureAwait(false);
             if (route == null || !string.IsNullOrWhiteSpace(route.Error))
@@ -797,10 +977,11 @@ namespace NetOptimizerV2
                       "；為避免誤判，A/B 不會視為已就緒。", true);
                 return false;
             }
-            if (!IsExpectedRoute(route, expectedInterface))
+            if (!IsExpectedRoute(route, expectedInterface, expectedInterfaceMetric))
             {
                 Write("路由驗證失敗：目前最低預設 route 是「" + route.InterfaceName +
-                      "」，不是預期的「" + expectedInterface + "」。", true);
+                      "」，或其 interface metric 不是預期的 " + expectedInterfaceMetric +
+                      "（預期介面「" + expectedInterface + "」）。", true);
                 return false;
             }
             Write("路由驗證成功：目前預設 route 使用「" + expectedInterface +
@@ -810,7 +991,8 @@ namespace NetOptimizerV2
 
         private async Task<bool> RestoreOriginalAsync(
             InterfaceMetricState primary,
-            InterfaceMetricState backup)
+            InterfaceMetricState backup,
+            MonitorSettings settings)
         {
             bool entered = false;
             try
@@ -822,13 +1004,15 @@ namespace NetOptimizerV2
                     Write("無法在期限內取得 network action lock，延後復原 A/B metric。", true);
                     return false;
                 }
-                bool primaryOk = await RestoreMetricAsync(primary).ConfigureAwait(false);
-                bool backupOk = await RestoreMetricAsync(backup).ConfigureAwait(false);
-                if (primaryOk && backupOk)
+                bool restored = await RestoreOriginalPairIfSafeAsync(
+                    primary,
+                    backup,
+                    settings).ConfigureAwait(false);
+                if (restored)
                 {
                     Write("A/B metric 已復原並通過讀回驗證。", false);
                 }
-                return primaryOk && backupOk;
+                return restored;
             }
             finally
             {
@@ -837,6 +1021,79 @@ namespace NetOptimizerV2
                     networkActionGate.Release();
                 }
             }
+        }
+
+        private async Task<bool> RestoreOriginalPairIfSafeAsync(
+            InterfaceMetricState originalPrimary,
+            InterfaceMetricState originalBackup,
+            MonitorSettings settings)
+        {
+            if (originalPrimary == null || originalBackup == null || settings == null)
+            {
+                Write("A/B 安全復原缺少原始 metric 或設定，保留 recovery journal。", true);
+                return false;
+            }
+
+            InterfaceMetricState currentPrimary = await NetworkInfo.ReadInterfaceMetricAsync(
+                originalPrimary.InterfaceName, CancellationToken.None).ConfigureAwait(false);
+            InterfaceMetricState currentBackup = await NetworkInfo.ReadInterfaceMetricAsync(
+                originalBackup.InterfaceName, CancellationToken.None).ConfigureAwait(false);
+            if (!CanRestoreOriginalState(
+                    currentPrimary,
+                    originalPrimary,
+                    settings.FailoverPrimaryMetric) ||
+                !CanRestoreOriginalState(
+                    currentBackup,
+                    originalBackup,
+                    settings.FailoverBackupMetric))
+            {
+                Write("A/B metric 與原始值或本程式管理值都不一致，未覆蓋外部變更；保留 recovery journal。", true);
+                return false;
+            }
+
+            bool primaryOk = await RestoreMetricIfNeededAsync(
+                currentPrimary,
+                originalPrimary).ConfigureAwait(false);
+            bool backupOk = await RestoreMetricIfNeededAsync(
+                currentBackup,
+                originalBackup).ConfigureAwait(false);
+            return primaryOk && backupOk;
+        }
+
+        private async Task<bool> RestoreMetricIfNeededAsync(
+            InterfaceMetricState current,
+            InterfaceMetricState original)
+        {
+            if (IsOriginalState(current, original))
+            {
+                Write("復原 " + original.InterfaceName + "：已是原始 metric，略過寫入。", false);
+                return true;
+            }
+            return await RestoreMetricAsync(original).ConfigureAwait(false);
+        }
+
+        private bool ClearOwnedRecoveryJournal(MetricRecoveryJournal expected)
+        {
+            string warning;
+            MetricRecoveryJournal current = RecoveryStore.Load(out warning);
+            if (!string.IsNullOrWhiteSpace(warning))
+            {
+                Write("讀取 recovery journal 所有權失敗：" + warning, true);
+                return false;
+            }
+            if (current == null)
+            {
+                return true;
+            }
+            if (expected == null || !string.Equals(
+                    current.SessionId,
+                    expected.SessionId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+            RecoveryStore.Clear();
+            return true;
         }
 
         private async Task<bool> RestoreMetricAsync(InterfaceMetricState original)
@@ -869,11 +1126,15 @@ namespace NetOptimizerV2
             LinkHealth active,
             LinkHealth standby)
         {
+            InterfaceSnapshot activeSnapshot =
+                NetworkInfo.GetInterfaceSnapshot(policy.ActiveInterface);
             InterfaceSnapshot standbySnapshot =
                 NetworkInfo.GetInterfaceSnapshot(policy.StandbyInterface);
             return new FailoverStatus
             {
-                Ready = standbySnapshot != null && standbySnapshot.IsReady,
+                Ready = policy.InFailover
+                    ? activeSnapshot != null && activeSnapshot.IsReady
+                    : standbySnapshot != null && standbySnapshot.IsReady,
                 InFailover = policy.InFailover,
                 SmartSelection = settings.SmartSelectionEnabled,
                 ActiveInterface = policy.ActiveInterface,
@@ -885,6 +1146,13 @@ namespace NetOptimizerV2
                 LastSwitchReason = policy.LastSwitchReason,
                 SwitchCount = policy.SwitchCount
             };
+        }
+
+        private static void SwapHealth(ref LinkHealth first, ref LinkHealth second)
+        {
+            LinkHealth previousFirst = first;
+            first = second;
+            second = previousFirst;
         }
 
         private static void AddStatistics(
@@ -904,9 +1172,10 @@ namespace NetOptimizerV2
 
         private static bool SwitchBudgetAvailable(
             List<DateTime> switchHistory,
-            MonitorSettings settings)
+            MonitorSettings settings,
+            DateTime nowUtc)
         {
-            DateTime cutoff = DateTime.UtcNow.AddHours(-1);
+            DateTime cutoff = nowUtc.AddHours(-1);
             switchHistory.RemoveAll(delegate(DateTime time) { return time < cutoff; });
             return switchHistory.Count < settings.SmartMaxSwitchesPerHour;
         }
@@ -931,6 +1200,54 @@ namespace NetOptimizerV2
             return state != null && string.IsNullOrWhiteSpace(state.Error) && state.Metric > 0;
         }
 
+        private bool CheckReadyPairNow(
+            string primary,
+            string backup,
+            string operation)
+        {
+            InterfaceSnapshot primarySnapshot = NetworkInfo.GetInterfaceSnapshot(primary);
+            InterfaceSnapshot backupSnapshot = NetworkInfo.GetInterfaceSnapshot(backup);
+            if (IsReadyPair(primarySnapshot, backupSnapshot))
+            {
+                return true;
+            }
+            Write(operation + "：A/B 未同時 IsReady（" +
+                  DescribePairReadiness(primarySnapshot, backupSnapshot) +
+                  ")，不會改動 metric。", true);
+            return false;
+        }
+
+        private bool CheckReadySwitchCandidateNow(
+            string candidate,
+            string existing,
+            string operation)
+        {
+            InterfaceSnapshot candidateSnapshot = NetworkInfo.GetInterfaceSnapshot(candidate);
+            InterfaceSnapshot existingSnapshot = NetworkInfo.GetInterfaceSnapshot(existing);
+            if (IsReadySwitchCandidate(candidateSnapshot, existingSnapshot) &&
+                !string.Equals(candidateSnapshot.Name, existingSnapshot.Name,
+                               StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string detail;
+            if (candidateSnapshot == null || !candidateSnapshot.IsReady)
+            {
+                detail = "候選主線尚未 IsReady";
+            }
+            else if (existingSnapshot == null)
+            {
+                detail = "原主線介面已不存在";
+            }
+            else
+            {
+                detail = "候選主線與原主線不是兩張不同介面";
+            }
+            Write(operation + "：" + detail + "，不會改動 metric。", true);
+            return false;
+        }
+
         internal static bool IsReadyPair(InterfaceSnapshot primary, InterfaceSnapshot backup)
         {
             return primary != null && backup != null &&
@@ -951,8 +1268,60 @@ namespace NetOptimizerV2
         {
             return route != null && string.IsNullOrWhiteSpace(route.Error) &&
                    !string.IsNullOrWhiteSpace(expectedInterface) &&
-                   string.Equals(route.InterfaceName, expectedInterface,
+                   string.Equals((route.InterfaceName ?? string.Empty).Trim(),
+                                 expectedInterface.Trim(),
                                  StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static bool IsExpectedRoute(
+            DefaultRouteState route,
+            string expectedInterface,
+            int expectedInterfaceMetric)
+        {
+            return expectedInterfaceMetric > 0 &&
+                   IsExpectedRoute(route, expectedInterface) &&
+                   route.InterfaceMetric == expectedInterfaceMetric;
+        }
+
+        internal static bool CanRestoreOriginalState(
+            InterfaceMetricState current,
+            InterfaceMetricState original,
+            int managedMetric)
+        {
+            if (!CanInspectOriginalState(current, original) || managedMetric <= 0)
+            {
+                return false;
+            }
+            return IsOriginalState(current, original) ||
+                   (!current.AutomaticMetric && current.Metric == managedMetric);
+        }
+
+        // Retained for recovery-journal compatibility tests and older callers.
+        // New sessions use the role-specific overload above.
+        internal static bool CanRestoreOriginalState(
+            InterfaceMetricState current,
+            InterfaceMetricState original,
+            int managedPrimaryMetric,
+            int managedBackupMetric)
+        {
+            if (!CanInspectOriginalState(current, original))
+            {
+                return false;
+            }
+            return IsOriginalState(current, original) ||
+                   (!current.AutomaticMetric &&
+                    (current.Metric == managedPrimaryMetric ||
+                     current.Metric == managedBackupMetric));
+        }
+
+        private static bool CanInspectOriginalState(
+            InterfaceMetricState current,
+            InterfaceMetricState original)
+        {
+            return MetricStateIsUsable(current) && original != null &&
+                   !string.IsNullOrWhiteSpace(original.InterfaceName) &&
+                   string.IsNullOrWhiteSpace(original.Error) &&
+                   (original.AutomaticMetric || original.Metric > 0);
         }
 
         private static string DescribePairReadiness(
@@ -1008,9 +1377,16 @@ namespace NetOptimizerV2
 
         private static bool IsManagedState(InterfaceMetricState current, MetricRecoveryEntry entry)
         {
-            return current != null && !current.AutomaticMetric &&
-                   (current.Metric == entry.ManagedPrimaryMetric ||
-                    current.Metric == entry.ManagedBackupMetric);
+            if (current == null || entry == null || current.AutomaticMetric)
+            {
+                return false;
+            }
+            if (entry.ManagedMetric > 0)
+            {
+                return current.Metric == entry.ManagedMetric;
+            }
+            return current.Metric == entry.ManagedPrimaryMetric ||
+                   current.Metric == entry.ManagedBackupMetric;
         }
 
         private static string FirstError(CommandResult result)
@@ -1040,7 +1416,7 @@ namespace NetOptimizerV2
             }
         }
 
-        private sealed class LinkHealth
+        internal sealed class LinkHealth
         {
             public string InterfaceName { get; set; }
             public string SourceIp { get; set; }
@@ -1078,7 +1454,9 @@ namespace NetOptimizerV2
                 {
                     InterfaceName = interfaceName,
                     Healthy = false,
-                    TotalTargets = 0,
+                    TotalTargets = 1,
+                    SuccessfulTargets = 0,
+                    LossRate = 1.0,
                     Error = error
                 };
             }
@@ -1089,7 +1467,7 @@ namespace NetOptimizerV2
             }
         }
 
-        private sealed class EwmaLinkStats
+        internal sealed class EwmaLinkStats
         {
             public bool HasSample { get; private set; }
             private double ewmaLatency;

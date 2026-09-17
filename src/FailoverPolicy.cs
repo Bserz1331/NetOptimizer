@@ -5,10 +5,18 @@ namespace NetOptimizerV2
     internal sealed class FailoverPolicy
     {
         public FailoverPolicy(string activeInterface, string standbyInterface)
+            : this(activeInterface, standbyInterface, DateTime.UtcNow)
+        {
+        }
+
+        internal FailoverPolicy(
+            string activeInterface,
+            string standbyInterface,
+            DateTime nowUtc)
         {
             ActiveInterface = activeInterface;
             StandbyInterface = standbyInterface;
-            LastSwitchUtc = DateTime.UtcNow;
+            LastSwitchUtc = nowUtc;
             NextSwitchAttemptUtc = DateTime.MinValue;
             LastSwitchReason = string.Empty;
         }
@@ -33,14 +41,17 @@ namespace NetOptimizerV2
             }
             else
             {
-                BadStreak++;
+                if (BadStreak < int.MaxValue)
+                {
+                    BadStreak++;
+                }
                 RecoverySinceUtc = DateTime.MinValue;
             }
         }
 
         public bool ShouldFailover(DateTime nowUtc, int badSamples)
         {
-            return BadStreak >= badSamples && CanAttemptSwitch(nowUtc);
+            return BadStreak >= Math.Max(1, badSamples) && CanAttemptSwitch(nowUtc);
         }
 
         public bool ObserveRecovery(bool healthy, DateTime nowUtc, int recoverySeconds)
@@ -55,7 +66,7 @@ namespace NetOptimizerV2
                 RecoverySinceUtc = nowUtc;
                 return false;
             }
-            return nowUtc - RecoverySinceUtc >= TimeSpan.FromSeconds(recoverySeconds) &&
+            return nowUtc - RecoverySinceUtc >= TimeSpan.FromSeconds(Math.Max(0, recoverySeconds)) &&
                    CanAttemptSwitch(nowUtc);
         }
 
@@ -73,9 +84,9 @@ namespace NetOptimizerV2
                 BetterSinceUtc = DateTime.MinValue;
                 return false;
             }
-            if (nowUtc - LastSwitchUtc < TimeSpan.FromSeconds(minDwellSeconds) ||
+            if (nowUtc - LastSwitchUtc < TimeSpan.FromSeconds(Math.Max(0, minDwellSeconds)) ||
                 !CanAttemptSwitch(nowUtc) ||
-                standbyScore + marginMs >= activeScore)
+                standbyScore + Math.Max(0, marginMs) >= activeScore)
             {
                 BetterSinceUtc = DateTime.MinValue;
                 return false;
@@ -85,7 +96,7 @@ namespace NetOptimizerV2
                 BetterSinceUtc = nowUtc;
                 return false;
             }
-            return nowUtc - BetterSinceUtc >= TimeSpan.FromSeconds(holdSeconds);
+            return nowUtc - BetterSinceUtc >= TimeSpan.FromSeconds(Math.Max(0, holdSeconds));
         }
 
         public bool CanAttemptSwitch(DateTime nowUtc)
@@ -114,6 +125,10 @@ namespace NetOptimizerV2
             bool failoverMode,
             string reason)
         {
+            if (nowUtc < LastSwitchUtc)
+            {
+                nowUtc = LastSwitchUtc;
+            }
             string previousActive = ActiveInterface;
             ActiveInterface = StandbyInterface;
             StandbyInterface = previousActive;

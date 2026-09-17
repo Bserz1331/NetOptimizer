@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,14 +8,23 @@ namespace NetOptimizerV2
 {
     internal sealed class MonitorEngine : IDisposable
     {
+        private sealed class RunState
+        {
+            public readonly CancellationTokenSource Cancellation =
+                new CancellationTokenSource();
+            public readonly List<Task> RefreshTasks = new List<Task>();
+            public Task LoopTask;
+        }
+
         private readonly object sync = new object();
         private readonly SemaphoreSlim refreshGate = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource lifetimeCancellation = new CancellationTokenSource();
-        private CancellationTokenSource cancellation;
-        private Task loopTask;
-        private Task refreshTask;
+        private readonly List<RunState> runs = new List<RunState>();
+        private readonly List<Task> unboundRefreshTasks = new List<Task>();
+        private RunState activeRun;
         private int failoverReady;
         private bool disposed;
+        private bool resourcesDisposed;
 
         public event EventHandler<EngineLogEventArgs> LogRaised;
         public event EventHandler<ProbeEventArgs> ProbeCompleted;
@@ -26,7 +36,8 @@ namespace NetOptimizerV2
             {
                 lock (sync)
                 {
-                    return loopTask != null && !loopTask.IsCompleted;
+                    return activeRun != null && activeRun.LoopTask != null &&
+                           !activeRun.LoopTask.IsCompleted;
                 }
             }
         }
@@ -37,24 +48,42 @@ namespace NetOptimizerV2
             MonitorSettings settings = source.Clone();
             settings.Normalize();
 
+            RunState run = null;
             lock (sync)
             {
                 ThrowIfDisposed();
-                if (loopTask != null && !loopTask.IsCompleted)
+                if (activeRun != null && activeRun.LoopTask != null &&
+                    !activeRun.LoopTask.IsCompleted)
                 {
                     return;
                 }
 
-                if (cancellation != null)
+                if (activeRun != null)
                 {
-                    cancellation.Dispose();
+                    CompleteRunNoLock(activeRun);
                 }
-                cancellation = new CancellationTokenSource();
-                CancellationToken token = cancellation.Token;
-                loopTask = Task.Run(async delegate
+                run = new RunState();
+                runs.Add(run);
+                activeRun = run;
+                try
                 {
-                    await LoopAsync(settings, token).ConfigureAwait(false);
-                });
+                    run.LoopTask = Task.Run(async delegate
+                    {
+                        await LoopAsync(settings, run.Cancellation.Token).ConfigureAwait(false);
+                    });
+                    run.LoopTask.ContinueWith(delegate(Task completed)
+                    {
+                        CompleteRun(run);
+                    }, TaskScheduler.Default);
+                }
+                catch
+                {
+                    activeRun = null;
+                    runs.Remove(run);
+                    run.Cancellation.Dispose();
+                    TryDisposeResourcesNoLock();
+                    throw;
+                }
             }
 
             RaiseFailoverStatus(new FailoverStatus
@@ -68,36 +97,20 @@ namespace NetOptimizerV2
 
         public void Stop()
         {
-            Task task;
-            CancellationTokenSource source;
+            RunState run;
             lock (sync)
             {
-                task = loopTask;
-                source = cancellation;
-                if (source != null)
+                run = activeRun;
+                if (run != null)
                 {
-                    source.Cancel();
+                    CancelSafely(run.Cancellation);
                 }
             }
 
-            if (task != null && !task.IsCompleted)
+            if (run != null)
             {
-                try { task.Wait(TimeSpan.FromSeconds(15)); }
-                catch (AggregateException) { }
-                catch (ObjectDisposedException) { }
-            }
-
-            lock (sync)
-            {
-                if (loopTask == null || loopTask.IsCompleted)
-                {
-                    loopTask = null;
-                    if (cancellation != null)
-                    {
-                        cancellation.Dispose();
-                        cancellation = null;
-                    }
-                }
+                WaitForTasks(new[] { run.LoopTask }, TimeSpan.FromSeconds(15));
+                CompleteRun(run);
             }
         }
 
@@ -106,31 +119,168 @@ namespace NetOptimizerV2
             if (source == null) { throw new ArgumentNullException("source"); }
             MonitorSettings settings = source.Clone();
             settings.Normalize();
-            CancellationToken token;
+            RunState run;
+            Task task;
             lock (sync)
             {
                 ThrowIfDisposed();
-                token = cancellation == null ? lifetimeCancellation.Token : cancellation.Token;
-            }
-
-            Task task = Task.Run(async delegate
-            {
-                await RefreshWithGateAsync(settings, token, true).ConfigureAwait(false);
-            });
-            lock (sync)
-            {
-                refreshTask = task;
+                run = activeRun != null && activeRun.LoopTask != null &&
+                      !activeRun.LoopTask.IsCompleted ? activeRun : null;
+                CancellationToken token = run == null
+                    ? lifetimeCancellation.Token
+                    : run.Cancellation.Token;
+                task = Task.Run(async delegate
+                {
+                    await RefreshWithGateAsync(settings, token, true).ConfigureAwait(false);
+                });
+                if (run == null)
+                {
+                    unboundRefreshTasks.Add(task);
+                }
+                else
+                {
+                    run.RefreshTasks.Add(task);
+                }
             }
             task.ContinueWith(delegate(Task completed)
             {
-                lock (sync)
-                {
-                    if (refreshTask == completed)
-                    {
-                        refreshTask = null;
-                    }
-                }
+                CompleteRefresh(run, completed);
             }, TaskScheduler.Default);
+        }
+
+        private void CompleteRun(RunState run)
+        {
+            lock (sync)
+            {
+                CompleteRunNoLock(run);
+            }
+        }
+
+        private void CompleteRunNoLock(RunState run)
+        {
+            if (run == null || run.LoopTask == null || !run.LoopTask.IsCompleted)
+            {
+                return;
+            }
+
+            if (ReferenceEquals(activeRun, run))
+            {
+                activeRun = null;
+            }
+            RemoveCompletedTasksNoLock(run.RefreshTasks);
+            if (run.RefreshTasks.Count == 0 && runs.Remove(run))
+            {
+                DisposeCancellation(run.Cancellation);
+            }
+            TryDisposeResourcesNoLock();
+        }
+
+        private void CompleteRefresh(RunState run, Task completed)
+        {
+            lock (sync)
+            {
+                if (run == null)
+                {
+                    unboundRefreshTasks.Remove(completed);
+                }
+                else
+                {
+                    run.RefreshTasks.Remove(completed);
+                    CompleteRunNoLock(run);
+                }
+                TryDisposeResourcesNoLock();
+            }
+        }
+
+        private Task[] GetOutstandingTasksNoLock()
+        {
+            List<Task> tasks = new List<Task>();
+            foreach (RunState run in runs)
+            {
+                if (run.LoopTask != null) { tasks.Add(run.LoopTask); }
+                tasks.AddRange(run.RefreshTasks);
+            }
+            tasks.AddRange(unboundRefreshTasks);
+            return tasks.ToArray();
+        }
+
+        private void PruneCompletedTasksNoLock()
+        {
+            for (int i = runs.Count - 1; i >= 0; i--)
+            {
+                RunState run = runs[i];
+                RemoveCompletedTasksNoLock(run.RefreshTasks);
+                if (run.LoopTask != null && run.LoopTask.IsCompleted &&
+                    run.RefreshTasks.Count == 0)
+                {
+                    if (ReferenceEquals(activeRun, run))
+                    {
+                        activeRun = null;
+                    }
+                    runs.RemoveAt(i);
+                    DisposeCancellation(run.Cancellation);
+                }
+            }
+            RemoveCompletedTasksNoLock(unboundRefreshTasks);
+        }
+
+        private static void RemoveCompletedTasksNoLock(List<Task> tasks)
+        {
+            for (int i = tasks.Count - 1; i >= 0; i--)
+            {
+                if (tasks[i] == null || tasks[i].IsCompleted)
+                {
+                    tasks.RemoveAt(i);
+                }
+            }
+        }
+
+        private void TryDisposeResourcesNoLock()
+        {
+            if (!disposed || resourcesDisposed || activeRun != null || runs.Count != 0 ||
+                unboundRefreshTasks.Count != 0)
+            {
+                return;
+            }
+
+            resourcesDisposed = true;
+            try { refreshGate.Dispose(); } catch (ObjectDisposedException) { }
+            try { lifetimeCancellation.Dispose(); } catch (ObjectDisposedException) { }
+        }
+
+        private static void CancelSafely(CancellationTokenSource source)
+        {
+            if (source == null) { return; }
+            try { source.Cancel(); }
+            catch (AggregateException) { }
+            catch (ObjectDisposedException) { }
+        }
+
+        private static void DisposeCancellation(CancellationTokenSource source)
+        {
+            if (source == null) { return; }
+            try { source.Dispose(); }
+            catch (ObjectDisposedException) { }
+        }
+
+        private static void WaitForTasks(Task[] tasks, TimeSpan timeout)
+        {
+            if (tasks == null || tasks.Length == 0) { return; }
+            DateTime deadline = DateTime.UtcNow.Add(timeout);
+            int currentTaskId = Task.CurrentId.HasValue ? Task.CurrentId.Value : -1;
+            foreach (Task task in tasks)
+            {
+                if (task == null || task.IsCompleted || task.Id == currentTaskId)
+                {
+                    continue;
+                }
+
+                TimeSpan remaining = deadline - DateTime.UtcNow;
+                if (remaining <= TimeSpan.Zero) { break; }
+                try { task.Wait(remaining); }
+                catch (AggregateException) { }
+                catch (ObjectDisposedException) { }
+            }
         }
 
         private async Task LoopAsync(MonitorSettings settings, CancellationToken token)
@@ -246,7 +396,15 @@ namespace NetOptimizerV2
                         }
                     }
 
+                    if (token.IsCancellationRequested)
+                    {
+                        break;
+                    }
                     RaiseProbe(result, badStreak, intervalMs);
+                    if (token.IsCancellationRequested)
+                    {
+                        break;
+                    }
                     await Task.Delay(intervalMs, token).ConfigureAwait(false);
                 }
             }
@@ -461,26 +619,27 @@ namespace NetOptimizerV2
 
         public void Dispose()
         {
+            Task[] outstanding;
             lock (sync)
             {
                 if (disposed) { return; }
                 disposed = true;
-                lifetimeCancellation.Cancel();
+                LogRaised = null;
+                ProbeCompleted = null;
+                FailoverStatusChanged = null;
+                CancelSafely(lifetimeCancellation);
+                foreach (RunState run in runs)
+                {
+                    CancelSafely(run.Cancellation);
+                }
+                outstanding = GetOutstandingTasksNoLock();
             }
-            Stop();
-            Task pendingRefresh;
+            WaitForTasks(outstanding, TimeSpan.FromSeconds(15));
             lock (sync)
             {
-                pendingRefresh = refreshTask;
+                PruneCompletedTasksNoLock();
+                TryDisposeResourcesNoLock();
             }
-            if (pendingRefresh != null && !pendingRefresh.IsCompleted)
-            {
-                try { pendingRefresh.Wait(TimeSpan.FromSeconds(15)); }
-                catch (AggregateException) { }
-                catch (ObjectDisposedException) { }
-            }
-            refreshGate.Dispose();
-            lifetimeCancellation.Dispose();
         }
     }
 }

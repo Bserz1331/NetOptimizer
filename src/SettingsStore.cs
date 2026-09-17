@@ -7,6 +7,7 @@ namespace NetOptimizerV2
     internal static class SettingsStore
     {
         private static readonly XmlSerializer Serializer = new XmlSerializer(typeof(MonitorSettings));
+        private static readonly object Sync = new object();
 
         public static string SettingsDirectory
         {
@@ -26,30 +27,39 @@ namespace NetOptimizerV2
         public static MonitorSettings Load(out string warning)
         {
             warning = null;
-            try
+            lock (Sync)
             {
-                if (!File.Exists(SettingsPath))
+                try
+                {
+                    using (FileStream stream = new FileStream(
+                        SettingsPath,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        MonitorSettings settings = (MonitorSettings)Serializer.Deserialize(stream);
+                        if (settings == null)
+                        {
+                            warning = "設定檔是空的，已改用預設值。";
+                            return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
+                        }
+                        settings.Normalize();
+                        return settings;
+                    }
+                }
+                catch (FileNotFoundException)
                 {
                     return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
                 }
-
-                using (FileStream stream = new FileStream(
-                    SettingsPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                catch (DirectoryNotFoundException)
                 {
-                    MonitorSettings settings = (MonitorSettings)Serializer.Deserialize(stream);
-                    if (settings == null)
-                    {
-                        warning = "設定檔是空的，已改用預設值。";
-                        return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
-                    }
-                    settings.Normalize();
-                    return settings;
+                    return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
                 }
-            }
-            catch (Exception ex)
-            {
-                warning = "讀取設定檔失敗，已改用預設值：" + ex.Message;
-                return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
+                catch (Exception ex)
+                {
+                    warning = "讀取設定檔失敗，已改用預設值：" + ex.Message;
+                    return MonitorSettings.CreateDefault(Localization.DetectWindowsDefault());
+                }
             }
         }
 
@@ -62,46 +72,56 @@ namespace NetOptimizerV2
 
             settings = settings.Clone();
             settings.Normalize();
-            Directory.CreateDirectory(SettingsDirectory);
-            string tempPath = SettingsPath + ".tmp";
+            lock (Sync)
+            {
+                Directory.CreateDirectory(SettingsDirectory);
+                string tempPath = SettingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    using (FileStream stream = new FileStream(
+                        tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        Serializer.Serialize(stream, settings);
+                    }
+
+                    CommitTempFile(tempPath, SettingsPath);
+                }
+                finally
+                {
+                    if (File.Exists(tempPath))
+                    {
+                        try { File.Delete(tempPath); } catch { }
+                    }
+                }
+            }
+        }
+
+        private static void CommitTempFile(string tempPath, string targetPath)
+        {
+            if (!File.Exists(targetPath))
+            {
+                try
+                {
+                    File.Move(tempPath, targetPath);
+                    return;
+                }
+                catch (IOException)
+                {
+                    if (!File.Exists(targetPath)) { throw; }
+                }
+            }
 
             try
             {
-                using (FileStream stream = new FileStream(
-                    tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    Serializer.Serialize(stream, settings);
-                }
+                File.Replace(tempPath, targetPath, null);
+                return;
+            }
+            catch (PlatformNotSupportedException) { }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
 
-                if (File.Exists(SettingsPath))
-                {
-                    try
-                    {
-                        File.Replace(tempPath, SettingsPath, null);
-                    }
-                    catch (PlatformNotSupportedException)
-                    {
-                        File.Copy(tempPath, SettingsPath, true);
-                        File.Delete(tempPath);
-                    }
-                    catch (IOException)
-                    {
-                        File.Copy(tempPath, SettingsPath, true);
-                        File.Delete(tempPath);
-                    }
-                }
-                else
-                {
-                    File.Move(tempPath, SettingsPath);
-                }
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                {
-                    try { File.Delete(tempPath); } catch { }
-                }
-            }
+            File.Copy(tempPath, targetPath, true);
+            File.Delete(tempPath);
         }
     }
 }
