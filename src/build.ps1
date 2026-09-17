@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "3.0.16",
+    [string]$Version = "3.0.17",
     [string]$OutputDirectory = "",
     [string]$SigningCertificateThumbprint = "",
     [string]$TimestampUrl = ""

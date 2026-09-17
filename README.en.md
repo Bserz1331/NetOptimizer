@@ -6,9 +6,9 @@ NetOptimizer is a portable Windows x64 network monitor with A/B failover and opt
 
 ## Download
 
-Download the latest stable build from [NetOptimizer v3.0.16](https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.16).
+Download the latest stable build from [NetOptimizer v3.0.17](https://github.com/Bserz1331/NetOptimizer/releases/tag/v3.0.17).
 
-For most users, download `NetOptimizer-v3.0.16-win-x64.zip`, extract it, and run `NetOptimizer-v3.0.16.exe`. No installer is required. The standalone EXE and SHA256 checksum file are also available in the release assets.
+For most users, download `NetOptimizer-v3.0.17-win-x64.zip`, extract it, and run `NetOptimizer-v3.0.17.exe`. No installer is required. The standalone EXE and SHA256 checksum file are also available in the release assets.
 
 ## Quick start
 
@@ -57,7 +57,7 @@ Start with Windows has two deliberate modes. A protected Program Files installat
 From Windows PowerShell:
 
 ```powershell
-.\build.ps1 -Version 3.0.16 -OutputDirectory .\dist
+.\build.ps1 -Version 3.0.17 -OutputDirectory .\dist
 ```
 
 The build uses the .NET Framework compiler and Windows SDK resources available on the machine. Code signing is optional; without a certificate the build reports that signing was skipped.
@@ -70,15 +70,15 @@ Maintainers can run the deterministic checks below from the repository root:
 <summary>Show validation commands</summary>
 
 ```powershell
-.\dist\NetOptimizer-v3.0.16.exe --self-test
-.\dist\NetOptimizer-v3.0.16.exe --failover-simulation
-.\dist\NetOptimizer-v3.0.16.exe --interface-probe-test
-.\dist\NetOptimizer-v3.0.16.exe --diagnostics-test
-.\dist\NetOptimizer-v3.0.16.exe --ui-layout-test
-.\dist\NetOptimizer-v3.0.16.exe --gui-startup-test
-.\dist\NetOptimizer-v3.0.16.exe --update-check-test
-.\dist\NetOptimizer-v3.0.16.exe --update-check-live-test
-.\dist\NetOptimizer-v3.0.16.exe --soak-test --seconds=60
+.\dist\NetOptimizer-v3.0.17.exe --self-test
+.\dist\NetOptimizer-v3.0.17.exe --failover-simulation
+.\dist\NetOptimizer-v3.0.17.exe --interface-probe-test
+.\dist\NetOptimizer-v3.0.17.exe --diagnostics-test
+.\dist\NetOptimizer-v3.0.17.exe --ui-layout-test
+.\dist\NetOptimizer-v3.0.17.exe --gui-startup-test
+.\dist\NetOptimizer-v3.0.17.exe --update-check-test
+.\dist\NetOptimizer-v3.0.17.exe --update-check-live-test
+.\dist\NetOptimizer-v3.0.17.exe --soak-test --seconds=60
 ```
 
 `--interface-probe-test` is read-only: it probes using each available interface's source IPv4 and does not change routes, metrics, DNS, or MTU. The metric test, when used, must run as administrator and is expected to be refused in a standard-user shell. Real A/B route switching should be tested as an administrator in an environment where a brief connection transition is acceptable.

@@ -1902,16 +1902,16 @@ namespace NetOptimizerV2
                     throw new InvalidOperationException("品牌圖示未載入。");
                 }
                 form.availableUpdate = new UpdateInfo(
-                    new Version(3, 0, 16, 0),
-                    "v3.0.16",
-                    UpdateChecker.RepositoryReleaseUrl + "/tag/v3.0.16");
+                    new Version(3, 0, 17, 0),
+                    "v3.0.17",
+                    UpdateChecker.RepositoryReleaseUrl + "/tag/v3.0.17");
                 form.UpdateUpdateUi();
                 form.PerformLayout();
                 Rectangle updateBounds = new Rectangle(
                     form.updateLink.PointToScreen(Point.Empty), form.updateLink.ClientSize);
                 Rectangle updateHeaderBounds = new Rectangle(
                     form.headerLayout.PointToScreen(Point.Empty), form.headerLayout.ClientSize);
-                if (!form.updateLink.Visible || form.updateLink.Text != form.L("更新") + " v3.0.16" ||
+                if (!form.updateLink.Visible || form.updateLink.Text != form.L("更新") + " v3.0.17" ||
                     form.trayUpdate.Owner != form.trayMenu ||
                     form.trayIgnoreUpdate.Owner != form.trayMenu || !form.trayUpdate.Enabled ||
                     !form.trayIgnoreUpdate.Enabled ||

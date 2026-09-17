@@ -1,4 +1,4 @@
-# NetOptimizer v3.0.16
+# NetOptimizer v3.0.17
 
 NetOptimizer 是 Windows 上的網路監測、一般刷新與 A/B 備援切換工具。v3 將原本的 NetOptimizer 與 DoubleNet 邏輯整合，保留手動控制，並把長時間執行、失敗復原與可驗證性放在優先位置。
 
@@ -51,13 +51,13 @@ NetOptimizer 是 Windows 上的網路監測、一般刷新與 A/B 備援切換�
 在 Windows PowerShell 執行：
 
 ```powershell
-./build.ps1 -Version 3.0.16 -OutputDirectory ./build
+./build.ps1 -Version 3.0.17 -OutputDirectory ./build
 ```
 
 若已有程式碼簽章憑證，可在建置時選擇性簽章；沒有憑證時腳本會明確輸出 skipped：
 
 ```powershell
-./build.ps1 -Version 3.0.16 -OutputDirectory ./build `
+./build.ps1 -Version 3.0.17 -OutputDirectory ./build `
   -SigningCertificateThumbprint "憑證指紋" `
   -TimestampUrl "https://你的時間戳服務"
 ```
@@ -65,18 +65,18 @@ NetOptimizer 是 Windows 上的網路監測、一般刷新與 A/B 備援切換�
 可執行檔支援下列檢查模式：
 
 ```powershell
-./NetOptimizer-v3.0.16.exe --self-test
-./NetOptimizer-v3.0.16.exe --failover-simulation
-./NetOptimizer-v3.0.16.exe --interface-probe-test
-./NetOptimizer-v3.0.16.exe --interface-metric-test
-./NetOptimizer-v3.0.16.exe --ui-layout-test
-./NetOptimizer-v3.0.16.exe --gui-startup-test
-./NetOptimizer-v3.0.16.exe --update-check-test
-./NetOptimizer-v3.0.16.exe --update-check-live-test
-./NetOptimizer-v3.0.16.exe --support-snapshot=./build/support.png
-./NetOptimizer-v3.0.16.exe --ui-snapshot=./build/ui-bluetooth.png --snapshot-network=bluetooth
-./NetOptimizer-v3.0.16.exe --stability-test
-./NetOptimizer-v3.0.16.exe --soak-test --seconds=60
+./NetOptimizer-v3.0.17.exe --self-test
+./NetOptimizer-v3.0.17.exe --failover-simulation
+./NetOptimizer-v3.0.17.exe --interface-probe-test
+./NetOptimizer-v3.0.17.exe --interface-metric-test
+./NetOptimizer-v3.0.17.exe --ui-layout-test
+./NetOptimizer-v3.0.17.exe --gui-startup-test
+./NetOptimizer-v3.0.17.exe --update-check-test
+./NetOptimizer-v3.0.17.exe --update-check-live-test
+./NetOptimizer-v3.0.17.exe --support-snapshot=./build/support.png
+./NetOptimizer-v3.0.17.exe --ui-snapshot=./build/ui-bluetooth.png --snapshot-network=bluetooth
+./NetOptimizer-v3.0.17.exe --stability-test
+./NetOptimizer-v3.0.17.exe --soak-test --seconds=60
 ```
 
 `--interface-probe-test` 只讀取目前可用介面並以各介面的來源 IPv4 做 TCP probe，不會改 metric、MTU、DNS 或 route。真正的 A/B route 切換必須在管理員權限下、並於可接受短暫連線變化的環境進行。

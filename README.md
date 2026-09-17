@@ -4,7 +4,7 @@ English documentation: [README.en.md](README.en.md)
 
 Windows 網路監測、A/B 備援切換與慢速 EWMA 智慧選路工具。
 
-目前 GitHub 公開穩定版本為 v3.0.16：修正高權限啟動、單一執行個體交接、監測狀態與 A/B 切換的邊界問題，並補強 UI、語系、更新檢查與自我測試。v3.0.16 延續安裝版高權限開機自動保護、繁體中文／English 介面切換、網路自動偵測與 A/B 啟動安全：備援只會選擇 `IsReady` 線路、排除 `NotPresent` 下拉項目，沒有第二條就緒線路時會清空備援、提示使用者並關閉自動切換；非管理員不會啟動 A/B。
+目前專案版本為 v3.0.17：在 v3.0.16 的高權限啟動、單一執行個體交接、UI、語系與 A/B 安全基礎上，進一步補強 metric／route 驗證、EWMA 時序、外部變更保護與監測生命週期。
 
 ## 專案結構
 
@@ -17,20 +17,20 @@ Windows 網路監測、A/B 備援切換與慢速 EWMA 智慧選路工具。
 - `README.en.md`：英文功能、建置與安全說明。
 - `src\assets\ui-icons\`：可縮放 SVG UI 圖示來源；建置時會嵌入 EXE，不需另外攜帶圖檔。
 
-GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.16 變更與驗證請看 [Release notes](docs/RELEASE-v3.0.16.md)。
+GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.17 變更與驗證請看 [Release notes](docs/RELEASE-v3.0.17.md)。
 
 ## 建置
 
 在本目錄的 Windows PowerShell 執行：
 
 ```powershell
-.\build.ps1 -Version 3.0.16 -OutputDirectory .\dist
+.\build.ps1 -Version 3.0.17 -OutputDirectory .\dist
 ```
 
 簽章憑證可選；沒有憑證時會保持未簽章並明確顯示 skipped：
 
 ```powershell
-  .\build.ps1 -Version 3.0.16 `
+  .\build.ps1 -Version 3.0.17 `
   -SigningCertificateThumbprint "憑證指紋" `
   -TimestampUrl "https://你的時間戳服務"
 ```
@@ -38,17 +38,17 @@ GitHub 發布步驟請看 [GitHub 發布準備](docs/GITHUB-PUBLISH.md)；v3.0.1
 ## 測試
 
 ```powershell
-.\dist\NetOptimizer-v3.0.16.exe --self-test
-.\dist\NetOptimizer-v3.0.16.exe --failover-simulation
-.\dist\NetOptimizer-v3.0.16.exe --interface-probe-test
-.\dist\NetOptimizer-v3.0.16.exe --diagnostics-test
-.\dist\NetOptimizer-v3.0.16.exe --interface-metric-test
-.\dist\NetOptimizer-v3.0.16.exe --ui-layout-test
-.\dist\NetOptimizer-v3.0.16.exe --gui-startup-test
-.\dist\NetOptimizer-v3.0.16.exe --update-check-test
-.\dist\NetOptimizer-v3.0.16.exe --update-check-live-test
-.\dist\NetOptimizer-v3.0.16.exe --support-snapshot=.\build\support.png
-.\dist\NetOptimizer-v3.0.16.exe --soak-test --seconds=60
+.\dist\NetOptimizer-v3.0.17.exe --self-test
+.\dist\NetOptimizer-v3.0.17.exe --failover-simulation
+.\dist\NetOptimizer-v3.0.17.exe --interface-probe-test
+.\dist\NetOptimizer-v3.0.17.exe --diagnostics-test
+.\dist\NetOptimizer-v3.0.17.exe --interface-metric-test
+.\dist\NetOptimizer-v3.0.17.exe --ui-layout-test
+.\dist\NetOptimizer-v3.0.17.exe --gui-startup-test
+.\dist\NetOptimizer-v3.0.17.exe --update-check-test
+.\dist\NetOptimizer-v3.0.17.exe --update-check-live-test
+.\dist\NetOptimizer-v3.0.17.exe --support-snapshot=.\build\support.png
+.\dist\NetOptimizer-v3.0.17.exe --soak-test --seconds=60
 ```
 
 ## 語言

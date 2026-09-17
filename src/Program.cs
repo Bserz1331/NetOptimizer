@@ -14,8 +14,8 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Space Cat")]
 [assembly: AssemblyProduct("NetOptimizer")]
 [assembly: AssemblyCopyright("Copyright © Space Cat")]
-[assembly: AssemblyVersion("3.0.16.0")]
-[assembly: AssemblyFileVersion("3.0.16.0")]
+[assembly: AssemblyVersion("3.0.17.0")]
+[assembly: AssemblyFileVersion("3.0.17.0")]
 
 namespace NetOptimizerV2
 {
